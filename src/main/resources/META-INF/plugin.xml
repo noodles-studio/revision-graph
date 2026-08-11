@@ -1,0 +1,24 @@
+<idea-plugin>
+    <id>io.github.fh00126072001.revisiongraph</id>
+    <name>Revision Graph</name>
+    <vendor>fh00126072001</vendor>
+    <description><![CDATA[An interactive, native IntelliJ revision graph backed by Git.]]></description>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Revision Graph" anchor="right"
+                    factoryClass="io.github.fh00126072001.revisiongraph.ui.RevisionGraphToolWindowFactory"
+                    canCloseContents="false"/>
+    </extensions>
+
+    <actions>
+        <action id="RevisionGraph.Open"
+                class="io.github.fh00126072001.revisiongraph.ui.OpenRevisionGraphAction"
+                text="Revision Graph" description="Open the revision graph">
+            <add-to-group group-id="Git.Menu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
