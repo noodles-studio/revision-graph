@@ -4,15 +4,17 @@ import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.ProjectLevelVcsManager
 import com.intellij.openapi.wm.ToolWindow
@@ -23,6 +25,8 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.*
 import com.intellij.ui.table.JBTable
 import com.intellij.util.Alarm
+import git4idea.branch.GitBrancher
+import git4idea.commands.Git
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryChangeListener
 import git4idea.repo.GitRepositoryManager
@@ -34,6 +38,7 @@ import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
 import java.awt.FlowLayout
+import java.awt.Point
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.nio.file.Path
@@ -64,6 +69,7 @@ class OpenRevisionGraphAction : DumbAwareAction() {
 
 private class RevisionGraphView(private val project: Project) : Disposable {
     private val git = GitClient(project)
+    private val comparisons = RevisionCompareService(project)
     private val generation = AtomicLong()
     private val detailGeneration = AtomicLong()
     private val cache = mutableMapOf<Path, Pair<GraphSnapshot, GraphLayout>>()
@@ -117,11 +123,16 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         rootBox.addActionListener {
             if (updatingRoots) return@addActionListener
             val selected = rootBox.selectedItem as? Path
-            if (selected != null && selected != currentRoot) { currentRoot = selected; load(false) }
+            if (selected != null && selected != currentRoot) {
+                canvas.clearSelection()
+                currentRoot = selected
+                load(false)
+            }
         }
         refresh.addActionListener { refreshRoots(); load(true) }
         retry.addActionListener { refreshRoots(); load(true) }
-        canvas.onSelection = ::loadDetails
+        canvas.onSelection = { hash -> if (hash == null) clearDetails() else loadDetails(hash) }
+        canvas.onContextMenu = ::showContextMenu
         canvas.onZoomChanged = { zoomLabel.text = "$it%" }
         project.messageBus.connect(this).subscribe(GitRepository.GIT_REPO_CHANGE, GitRepositoryChangeListener { repository ->
             if (repository.root.toNioPath() == currentRoot) {
@@ -148,6 +159,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         try {
             rootBox.model = DefaultComboBoxModel(discovered.toTypedArray())
             currentRoot = previous?.takeIf { it in discovered } ?: discovered.firstOrNull()
+            if (currentRoot != previous) canvas.clearSelection()
             rootBox.selectedItem = currentRoot
             rootBox.isEnabled = discovered.size > 1
         } finally { updatingRoots = false }
@@ -184,7 +196,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private fun publish(snapshot: GraphSnapshot, layout: GraphLayout) {
         canvas.show(snapshot, layout); (cards.layout as CardLayout).show(cards, "graph")
         graphSummary.text = "${snapshot.commits.size} commits  ·  ${snapshot.refsByCommit.values.sumOf { it.size }} refs"
-        canvas.selectedHash()?.let(::loadDetails)
+        canvas.activeHash()?.let(::loadDetails) ?: clearDetails()
     }
 
     private fun showStatus(text: String, canRetry: Boolean) {
@@ -206,6 +218,42 @@ private class RevisionGraphView(private val project: Project) : Disposable {
                 value?.let(details::show) ?: details.error(failure ?: "Details loading cancelled")
             }
         })
+    }
+
+    private fun clearDetails() {
+        detailGeneration.incrementAndGet()
+        detailIndicator?.cancel()
+        details.clear()
+    }
+
+    private fun showContextMenu(selection: RevisionCompareSelection, point: Point) {
+        val base = selection.base
+        val group = DefaultActionGroup()
+        val target = selection.target
+        if (target == null) {
+            group.add(object : DumbAwareAction("${base.displayName} 与当前工作区比较差异") {
+                override fun actionPerformed(e: AnActionEvent) = compareWithWorkspace(base)
+            })
+        } else {
+            group.add(object : DumbAwareAction("比较 Ⅰ ${base.displayName} → Ⅱ ${target.displayName}") {
+                override fun actionPerformed(e: AnActionEvent) = compareRevisions(base, target)
+            })
+        }
+        ActionManager.getInstance().createActionPopupMenu(ActionPlaces.POPUP, group).component.show(canvas, point.x, point.y)
+    }
+
+    private fun compareWithWorkspace(revision: CompareRevision) {
+        val root = currentRoot
+        if (root == null || !comparisons.compareWithWorkspace(root, revision)) showComparisonUnavailable()
+    }
+
+    private fun compareRevisions(base: CompareRevision, target: CompareRevision) {
+        val root = currentRoot
+        if (root == null || !comparisons.compareRevisions(root, base, target)) showComparisonUnavailable()
+    }
+
+    private fun showComparisonUnavailable() {
+        Messages.showWarningDialog(project, "The selected Git repository is no longer available. Refresh the revision graph and try again.", "Revision Graph")
     }
 
     private fun openDiff(change: FileChange, details: CommitDetails) {
@@ -232,6 +280,56 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         toolTipText = tooltip; isFocusable = false; margin = java.awt.Insets(2, 9, 2, 9); addActionListener { action() }
     }
     private fun escape(value: String) = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+}
+
+internal class RevisionCompareService(private val project: Project) {
+    private val repositoryManager = GitRepositoryManager.getInstance(project)
+
+    fun compareWithWorkspace(root: Path, selected: CompareRevision): Boolean {
+        val repository = findRepository(root) ?: return false
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Preparing Revision Comparison", true) {
+            private var revision = selected.hash
+            override fun run(indicator: ProgressIndicator) {
+                indicator.checkCanceled()
+                revision = verifiedRevision(repository, selected)
+            }
+            override fun onSuccess() {
+                if (!project.isDisposed) GitBrancher.getInstance(project).showDiffWithLocal(revision, listOf(repository))
+            }
+        })
+        return true
+    }
+
+    fun compareRevisions(root: Path, base: CompareRevision, target: CompareRevision): Boolean {
+        val repository = findRepository(root) ?: return false
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Preparing Revision Comparison", true) {
+            private var baseRevision = base.hash
+            private var targetRevision = target.hash
+            override fun run(indicator: ProgressIndicator) {
+                indicator.checkCanceled()
+                baseRevision = verifiedRevision(repository, base)
+                indicator.checkCanceled()
+                targetRevision = verifiedRevision(repository, target)
+            }
+            override fun onSuccess() {
+                if (!project.isDisposed) GitBrancher.getInstance(project).showDiff(baseRevision, targetRevision, listOf(repository))
+            }
+        })
+        return true
+    }
+
+    private fun verifiedRevision(repository: GitRepository, selected: CompareRevision): String {
+        if (selected.revision == selected.hash) return selected.hash
+        val resolved = runCatching {
+            Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
+        }.getOrNull()
+        return if (resolved.equals(selected.hash, ignoreCase = true)) selected.revision else selected.hash
+    }
+
+    private fun findRepository(root: Path): GitRepository? {
+        val expected = root.toAbsolutePath().normalize()
+        return repositoryManager.repositories.firstOrNull { it.root.toNioPath().toAbsolutePath().normalize() == expected }
+    }
 }
 
 private class DetailsPanel(private val diff: (FileChange, CommitDetails) -> Unit) {
@@ -273,6 +371,16 @@ private class DetailsPanel(private val diff: (FileChange, CommitDetails) -> Unit
     } }) }
     fun loading(hash: String) {
         title.text = "Loading commit…"; identity.text = hash.take(12); this.hash.text = ""; parents.text = ""; message.text = ""; model.set(emptyList())
+    }
+    fun clear() {
+        current = null
+        title.text = "Select a commit"
+        identity.text = "Click a commit in the graph to inspect it"
+        hash.text = ""
+        parents.text = ""
+        message.text = ""
+        model.set(emptyList())
+        tabs.setTitleAt(1, "Changes")
     }
     fun error(message: String) { title.text = "Unable to load commit"; identity.text = message; this.message.text = "" }
     fun show(value: CommitDetails) {

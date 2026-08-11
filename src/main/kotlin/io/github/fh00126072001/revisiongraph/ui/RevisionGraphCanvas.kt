@@ -23,16 +23,20 @@ import kotlin.math.min
 
 /** RevisionGraph-style block topology with IDEA-aware colors and interaction. */
 class RevisionGraphCanvas : JComponent() {
-    var onSelection: ((String) -> Unit)? = null
+    var onSelection: ((String?) -> Unit)? = null
+    internal var onContextMenu: ((RevisionCompareSelection, Point) -> Unit)? = null
     var onZoomChanged: ((Int) -> Unit)? = null
     private var snapshot: GraphSnapshot? = null
     private var layout: GraphLayout? = null
     private var scale = .92
     private var offsetX = 28.0
     private var offsetY = 22.0
-    private var selected: String? = null
+    private var selection = RevisionSelection.EMPTY
+    private val compareRevisionsByHash = mutableMapOf<String, CompareRevision>()
     private var dragStart: Point? = null
     private var dragged = false
+    private var pressedButton = MouseEvent.NOBUTTON
+    private var popupHandledOnPress = false
 
     private val laneColors = arrayOf(
         JBColor(Color(0x397BC2), Color(0x5897D5)), JBColor(Color(0x37865A), Color(0x57A877)),
@@ -47,7 +51,13 @@ class RevisionGraphCanvas : JComponent() {
         addMouseWheelListener { e -> zoomAt(if (e.preciseWheelRotation < 0) 1.12 else .89, e.point) }
         val mouse = object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
+                popupHandledOnPress = isContextTrigger(e)
+                if (popupHandledOnPress) {
+                    showContextMenu(e)
+                    return
+                }
                 if (SwingUtilities.isLeftMouseButton(e) || SwingUtilities.isMiddleMouseButton(e)) {
+                    pressedButton = e.button
                     dragStart = e.point; dragged = false; cursor = Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
                 }
             }
@@ -57,22 +67,37 @@ class RevisionGraphCanvas : JComponent() {
                 offsetX += e.x - start.x; offsetY += e.y - start.y; dragStart = e.point; repaint()
             }
             override fun mouseReleased(e: MouseEvent) {
+                if (isContextTrigger(e)) {
+                    dragStart = null
+                    cursor = Cursor.getDefaultCursor()
+                    pressedButton = MouseEvent.NOBUTTON
+                    if (!popupHandledOnPress) showContextMenu(e)
+                    popupHandledOnPress = false
+                    return
+                }
                 dragStart = null; cursor = Cursor.getDefaultCursor()
-                if (!dragged) hit(e.point)?.let { selected = it; repaint(); onSelection?.invoke(it) }
+                if (!dragged && pressedButton == MouseEvent.BUTTON1) {
+                    val target = hitTarget(e.point)
+                    updateSelection(selection.click(target?.hash, e.isControlDown || e.isMetaDown), target)
+                }
+                pressedButton = MouseEvent.NOBUTTON
+                popupHandledOnPress = false
             }
-            override fun mouseMoved(e: MouseEvent) { cursor = if (hit(e.point) != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor() }
+            override fun mouseMoved(e: MouseEvent) { cursor = if (hitTarget(e.point) != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor() }
         }
         addMouseListener(mouse); addMouseMotionListener(mouse)
     }
 
-    fun show(snapshot: GraphSnapshot, layout: GraphLayout, keepHash: String? = selected) {
+    fun show(snapshot: GraphSnapshot, layout: GraphLayout) {
         val firstGraph = this.layout == null
         this.snapshot = snapshot; this.layout = layout
-        selected = keepHash?.takeIf { it in layout.byHash }
+        selection = selection.retain(layout.byHash.keys)
+        retainCompareRevisions()
         if (firstGraph) resetView() else repaint()
     }
 
-    fun selectedHash() = selected
+    fun activeHash() = selection.activeHash
+    fun clearSelection() = updateSelection(RevisionSelection.EMPTY)
     fun zoomIn() = zoomAt(1.18, Point(width / 2, height / 2))
     fun zoomOut() = zoomAt(.84, Point(width / 2, height / 2))
     fun resetView() { scale = .92; offsetX = 28.0; offsetY = 22.0; zoomChanged(); repaint() }
@@ -106,7 +131,7 @@ class RevisionGraphCanvas : JComponent() {
         val visible = screenToWorld(Rectangle(0, 0, width, height))
         val highlighted = highlightedEdges(model)
         drawEdges(g2, graph, visible, highlighted, false)
-        if (selected != null) drawEdges(g2, graph, visible, highlighted, true)
+        if (selection.baseHash != null) drawEdges(g2, graph, visible, highlighted, true)
         graph.index.query(expand(visible, 8.0, 8.0)).forEach { drawNode(g2, model, it) }
         g2.dispose()
     }
@@ -167,11 +192,15 @@ class RevisionGraphCanvas : JComponent() {
     private fun drawNode(g: Graphics2D, model: GraphSnapshot, node: NodeLayout) {
         val commit = model.commitsByHash.getValue(node.hash)
         val refs = visualRefs(model, node.hash)
-        val isSelected = node.hash == selected
+        val marker = when (node.hash) {
+            selection.baseHash -> SelectionMarker.BASE
+            selection.targetHash -> SelectionMarker.TARGET
+            else -> null
+        }
         val b = node.bounds
 
-        if (isSelected) {
-            g.color = JBColor(Color(0xD6E8FF), Color(0x355373))
+        if (marker != null) {
+            g.color = marker.halo
             g.fillRoundRect((b.x - 4).toInt(), (b.y - 4).toInt(), (b.width + 8).toInt(), (b.height + 8).toInt(), 13, 13)
         }
         g.color = JBColor(Color(0xD8DCE2), Color(0x101113))
@@ -212,15 +241,40 @@ class RevisionGraphCanvas : JComponent() {
                 }
             }
         }
+        marker?.let { drawSelectionMarker(g, b, it) }
     }
 
-    private data class VisualRef(val text: String, val kind: RefKind, val head: Boolean)
+    private data class VisualRef(val text: String, val revision: String?, val kind: RefKind, val head: Boolean)
+
+    private enum class SelectionMarker(val text: String, val color: JBColor, val halo: JBColor) {
+        BASE("Ⅰ", JBColor(Color(0x1E6FB8), Color(0x65B3F3)), JBColor(Color(0xD6E8FF), Color(0x355373))),
+        TARGET("Ⅱ", JBColor(Color(0x8A2638), Color(0xE06C75)), JBColor(Color(0xF5DCE1), Color(0x59323A))),
+    }
+
+    private fun drawSelectionMarker(g: Graphics2D, bounds: Rectangle2D.Double, marker: SelectionMarker) {
+        val oldStroke = g.stroke
+        val oldFont = g.font
+        g.color = marker.color
+        g.stroke = BasicStroke(2.2f)
+        g.drawRoundRect((bounds.x - 2).toInt(), (bounds.y - 2).toInt(), (bounds.width + 4).toInt(), (bounds.height + 4).toInt(), 12, 12)
+
+        val badgeSize = 19
+        val badgeX = (bounds.x - badgeSize / 2.0).toInt()
+        val badgeY = (bounds.y - badgeSize / 2.0).toInt()
+        g.fillRoundRect(badgeX, badgeY, badgeSize, badgeSize, 9, 9)
+        g.font = oldFont.deriveFont(Font.BOLD, 11f)
+        g.color = JBColor.WHITE
+        val metrics = g.fontMetrics
+        g.drawString(marker.text, badgeX + (badgeSize - metrics.stringWidth(marker.text)) / 2, badgeY + (badgeSize - metrics.height) / 2 + metrics.ascent)
+        g.stroke = oldStroke
+        g.font = oldFont
+    }
 
     private fun visualRefs(model: GraphSnapshot, hash: String): List<VisualRef> = buildList {
-        if (model.head.hash == hash && model.head.detached) add(VisualRef("HEAD · detached", RefKind.OTHER, true))
+        if (model.head.hash == hash && model.head.detached) add(VisualRef("HEAD · detached", null, RefKind.OTHER, true))
         model.refsByCommit[hash].orEmpty().forEach { ref ->
             val head = model.head.hash == hash && model.head.branch == ref.displayName
-            add(VisualRef(if (head) "HEAD · ${ref.displayName}" else ref.displayName, ref.kind, head))
+            add(VisualRef(if (head) "HEAD · ${ref.displayName}" else ref.displayName, compareRevisionName(ref), ref.kind, head))
         }
     }
 
@@ -258,7 +312,7 @@ class RevisionGraphCanvas : JComponent() {
     }
 
     private fun highlightedEdges(model: GraphSnapshot): Set<Pair<String, String>> {
-        val start = selected ?: return emptySet()
+        val start = selection.baseHash ?: return emptySet()
         val edges = linkedSetOf<Pair<String, String>>(); val seen = hashSetOf<String>(); val queue = ArrayDeque<String>(); queue += start
         while (queue.isNotEmpty()) {
             val hash = queue.removeFirst(); if (!seen.add(hash)) continue
@@ -267,7 +321,7 @@ class RevisionGraphCanvas : JComponent() {
         return edges
     }
 
-    override fun getToolTipText(event: MouseEvent): String? = hit(event.point)?.let { hash ->
+    override fun getToolTipText(event: MouseEvent): String? = hitTarget(event.point)?.hash?.let { hash ->
         val commit = snapshot?.commitsByHash?.get(hash) ?: return@let null
         val date = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(Instant.ofEpochSecond(commit.epochSeconds).atZone(ZoneId.systemDefault()))
         val text = buildString {
@@ -282,7 +336,59 @@ class RevisionGraphCanvas : JComponent() {
         "<html><pre>${escape(text)}</pre></html>"
     }
 
-    private fun hit(point: Point): String? = layout?.index?.hit(screenToWorld(Point2D.Double(point.x.toDouble(), point.y.toDouble())))?.hash
+    private data class HitTarget(val hash: String, val revision: String)
+
+    private fun hitTarget(point: Point): HitTarget? {
+        val graph = layout ?: return null
+        val model = snapshot ?: return null
+        val world = screenToWorld(Point2D.Double(point.x.toDouble(), point.y.toDouble()))
+        val node = graph.index.hit(world) ?: return null
+        val refs = visualRefs(model, node.hash)
+        if (refs.isEmpty()) return HitTarget(node.hash, node.hash)
+        val rowHeight = node.bounds.height / refs.size
+        val row = ((world.y - node.bounds.y) / rowHeight).toInt().coerceIn(0, refs.lastIndex)
+        return HitTarget(node.hash, refs[row].revision ?: node.hash)
+    }
+
+    private fun updateSelection(value: RevisionSelection, clicked: HitTarget? = null) {
+        val changed = selection != value
+        selection = value
+        if (clicked != null && (clicked.hash == value.baseHash || clicked.hash == value.targetHash)) {
+            compareRevisionsByHash[clicked.hash] = CompareRevision(clicked.hash, clicked.revision)
+        }
+        retainCompareRevisions()
+        if (changed || clicked != null) repaint()
+        if (changed) onSelection?.invoke(value.activeHash)
+    }
+
+    private fun retainCompareRevisions() {
+        val model = snapshot
+        val selectedHashes = setOfNotNull(selection.baseHash, selection.targetHash)
+        compareRevisionsByHash.keys.retainAll(selectedHashes)
+        if (model == null) return
+        selectedHashes.forEach { hash ->
+            val availableNames = model.refsByCommit[hash].orEmpty().mapNotNull(::compareRevisionName).toSet()
+            val current = compareRevisionsByHash[hash]
+            if (current == null || current.revision != hash && current.revision !in availableNames) {
+                compareRevisionsByHash[hash] = preferredCompareRevision(model, hash)
+            }
+        }
+    }
+
+    private fun showContextMenu(event: MouseEvent) {
+        val target = hitTarget(event.point) ?: return
+        updateSelection(selection.contextClick(target.hash), target)
+        val baseHash = selection.baseHash ?: return
+        val model = snapshot ?: return
+        val base = compareRevisionsByHash[baseHash] ?: preferredCompareRevision(model, baseHash)
+        val compareSelection = RevisionCompareSelection(base, selection.targetHash?.let { hash ->
+            compareRevisionsByHash[hash] ?: preferredCompareRevision(model, hash)
+        })
+        onContextMenu?.invoke(compareSelection, event.point)
+    }
+
+    private fun isContextTrigger(event: MouseEvent) = event.isPopupTrigger && SwingUtilities.isRightMouseButton(event)
+
     private fun laneColor(lane: Int) = laneColors[lane.mod(laneColors.size)]
     private fun expand(r: Rectangle2D, x: Double, y: Double) = Rectangle2D.Double(r.x - x, r.y - y, r.width + x * 2, r.height + y * 2)
     private fun screenToWorld(point: Point2D) = Point2D.Double((point.x - offsetX) / scale, (point.y - offsetY) / scale)
