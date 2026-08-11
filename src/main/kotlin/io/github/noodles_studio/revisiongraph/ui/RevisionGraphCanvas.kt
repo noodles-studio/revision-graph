@@ -6,6 +6,7 @@ import io.github.noodles_studio.revisiongraph.layout.GraphLayout
 import io.github.noodles_studio.revisiongraph.layout.NodeLayout
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import io.github.noodles_studio.revisiongraph.model.RefKind
+import io.github.noodles_studio.revisiongraph.model.RevisionRef
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -266,37 +267,32 @@ class RevisionGraphCanvas : JComponent() {
         marker?.let { drawSelectionMarker(g, b, it) }
     }
 
-    private data class VisualRef(val text: String, val revision: String?, val kind: RefKind, val head: Boolean)
+    private data class VisualRef(
+        val text: String,
+        val revision: String?,
+        val kind: RefKind,
+        val head: Boolean,
+        val ref: RevisionRef? = null,
+    )
 
-    private enum class SelectionMarker(val text: String, val color: JBColor, val halo: JBColor) {
-        BASE("Ⅰ", JBColor(Color(0x1E6FB8), Color(0x65B3F3)), JBColor(Color(0xD6E8FF), Color(0x355373))),
-        TARGET("Ⅱ", JBColor(Color(0x8A2638), Color(0xE06C75)), JBColor(Color(0xF5DCE1), Color(0x59323A))),
+    private enum class SelectionMarker(val color: JBColor, val halo: JBColor) {
+        BASE(JBColor(Color(0x1E6FB8), Color(0x65B3F3)), JBColor(Color(0xD6E8FF), Color(0x355373))),
+        TARGET(JBColor(Color(0x8A2638), Color(0xE06C75)), JBColor(Color(0xF5DCE1), Color(0x59323A))),
     }
 
     private fun drawSelectionMarker(g: Graphics2D, bounds: Rectangle2D.Double, marker: SelectionMarker) {
         val oldStroke = g.stroke
-        val oldFont = g.font
         g.color = marker.color
         g.stroke = BasicStroke(2.2f)
         g.drawRoundRect((bounds.x - 2).toInt(), (bounds.y - 2).toInt(), (bounds.width + 4).toInt(), (bounds.height + 4).toInt(), 12, 12)
-
-        val badgeSize = 19
-        val badgeX = (bounds.x - badgeSize / 2.0).toInt()
-        val badgeY = (bounds.y - badgeSize / 2.0).toInt()
-        g.fillRoundRect(badgeX, badgeY, badgeSize, badgeSize, 9, 9)
-        g.font = oldFont.deriveFont(Font.BOLD, 11f)
-        g.color = JBColor.WHITE
-        val metrics = g.fontMetrics
-        g.drawString(marker.text, badgeX + (badgeSize - metrics.stringWidth(marker.text)) / 2, badgeY + (badgeSize - metrics.height) / 2 + metrics.ascent)
         g.stroke = oldStroke
-        g.font = oldFont
     }
 
     private fun visualRefs(model: GraphSnapshot, hash: String): List<VisualRef> = buildList {
         if (model.head.hash == hash && model.head.detached) add(VisualRef(message("node.head.detached"), null, RefKind.OTHER, true))
         model.refsByCommit[hash].orEmpty().forEach { ref ->
             val head = model.head.hash == hash && model.head.branch == ref.displayName
-            add(VisualRef(if (head) "HEAD · ${ref.displayName}" else ref.displayName, compareRevisionName(ref), ref.kind, head))
+            add(VisualRef(if (head) "HEAD · ${ref.displayName}" else ref.displayName, compareRevisionName(ref), ref.kind, head, ref))
         }
     }
 
@@ -360,7 +356,11 @@ class RevisionGraphCanvas : JComponent() {
         "<html><pre>${escape(text)}</pre></html>"
     }
 
-    private data class HitTarget(val hash: String, val revision: String)
+    private data class HitTarget(
+        val hash: String,
+        val revision: String,
+        val ref: RevisionRef? = null,
+    )
 
     private fun hitTarget(point: Point): HitTarget? {
         val graph = layout ?: return null
@@ -371,7 +371,7 @@ class RevisionGraphCanvas : JComponent() {
         if (refs.isEmpty()) return HitTarget(node.hash, node.hash)
         val rowHeight = node.bounds.height / refs.size
         val row = ((world.y - node.bounds.y) / rowHeight).toInt().coerceIn(0, refs.lastIndex)
-        return HitTarget(node.hash, refs[row].revision ?: node.hash)
+        return HitTarget(node.hash, refs[row].revision ?: node.hash, refs[row].ref)
     }
 
     private fun updateSelection(value: RevisionSelection, clicked: HitTarget? = null) {
@@ -416,7 +416,14 @@ class RevisionGraphCanvas : JComponent() {
         }
         val activeHash = selection.activeHash ?: baseHash
         val active = compareRevisionsByHash[activeHash] ?: preferredCompareRevision(model, activeHash)
-        val compareSelection = RevisionCompareSelection(base, selectedTarget, active)
+        val compareSelection = RevisionCompareSelection(
+            base = base,
+            target = selectedTarget,
+            active = active,
+            activeRef = target.ref,
+            activeRefs = model.refsByCommit[activeHash].orEmpty(),
+            head = model.head,
+        )
         onContextMenu?.invoke(compareSelection, event.point)
     }
 

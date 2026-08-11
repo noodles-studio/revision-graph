@@ -7,6 +7,7 @@ import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -29,6 +30,9 @@ import com.intellij.vcs.log.VcsLogFilterCollection
 import com.intellij.vcs.log.impl.VcsProjectLog
 import com.intellij.vcs.log.ui.MainVcsLogUi
 import com.intellij.vcs.log.visible.filters.VcsLogFilterObject
+import git4idea.GitReference
+import git4idea.GitTag
+import git4idea.actions.ref.GitCheckoutAction
 import git4idea.branch.GitBrancher
 import git4idea.commands.Git
 import git4idea.repo.GitRepository
@@ -41,6 +45,7 @@ import io.github.noodles_studio.revisiongraph.layout.LayeredDagLayoutEngine
 import io.github.noodles_studio.revisiongraph.model.*
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.datatransfer.StringSelection
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Point
@@ -74,6 +79,7 @@ class OpenRevisionGraphAction : DumbAwareAction() {
 private class RevisionGraphView(private val project: Project) : Disposable {
     private val git = GitClient(project)
     private val comparisons = RevisionCompareService(project)
+    private val checkouts = RevisionCheckoutService(project)
     private val logs = RevisionLogService(project)
     private val generation = AtomicLong()
     private val cache = mutableMapOf<Path, Pair<GraphSnapshot, GraphLayout>>()
@@ -311,15 +317,35 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         val base = selection.base
         val group = DefaultActionGroup()
         val target = selection.target
-        group.add(object : DumbAwareAction(message("menu.show.history", selection.active.displayName)) {
-            override fun actionPerformed(e: AnActionEvent) = showLog(selection.active)
-        })
-        group.addSeparator()
         if (target == null) {
+            group.add(object : DumbAwareAction(message("menu.show.history", selection.active.displayName)) {
+                override fun actionPerformed(e: AnActionEvent) = showLog(selection.active)
+            })
+            selection.activeRef?.takeIf { checkoutAvailable(it, selection.head) }?.let { ref ->
+                group.add(object : DumbAwareAction(checkoutLabel(ref)) {
+                    override fun actionPerformed(e: AnActionEvent) = checkout(ref, e)
+                })
+            }
+            group.addSeparator()
             group.add(object : DumbAwareAction(message("menu.compare.workspace", base.displayName)) {
                 override fun actionPerformed(e: AnActionEvent) = compareWithWorkspace(base)
             })
+            group.add(object : DumbAwareAction(message("menu.compare.head", base.displayName, headDisplayName(selection.head))) {
+                override fun actionPerformed(e: AnActionEvent) = compareWithHead(base)
+            })
+            group.addSeparator()
+            val copyText = copyableRevisionText(selection.activeRefs, selection.active.hash)
+            val copyMessage = if (selection.activeRefs.isEmpty()) "menu.copy.hash" else "menu.copy.refs"
+            group.add(object : DumbAwareAction(message(copyMessage)) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    CopyPasteManager.getInstance().setContents(StringSelection(copyText))
+                }
+            })
         } else {
+            group.add(object : DumbAwareAction(message("menu.show.range", base.displayName, target.displayName)) {
+                override fun actionPerformed(e: AnActionEvent) = showLogRange(base, target)
+            })
+            group.addSeparator()
             group.add(object : DumbAwareAction(message("menu.compare.revisions", base.displayName, target.displayName)) {
                 override fun actionPerformed(e: AnActionEvent) = compareRevisions(base, target)
             })
@@ -337,14 +363,36 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         if (root == null || !logs.showShared(root, revision)) showRepositoryUnavailable()
     }
 
+    private fun showLogRange(base: CompareRevision, target: CompareRevision) {
+        val root = currentRoot
+        if (root == null || !logs.showRange(root, base, target)) showRepositoryUnavailable()
+    }
+
     private fun compareWithWorkspace(revision: CompareRevision) {
         val root = currentRoot
         if (root == null || !comparisons.compareWithWorkspace(root, revision)) showRepositoryUnavailable()
     }
 
+    private fun compareWithHead(revision: CompareRevision) {
+        val root = currentRoot
+        if (root == null || !comparisons.compareWithHead(root, revision)) showRepositoryUnavailable()
+    }
+
     private fun compareRevisions(base: CompareRevision, target: CompareRevision) {
         val root = currentRoot
         if (root == null || !comparisons.compareRevisions(root, base, target)) showRepositoryUnavailable()
+    }
+
+    private fun checkout(ref: RevisionRef, event: AnActionEvent) {
+        val root = currentRoot
+        if (root == null || !checkouts.checkout(root, ref, event)) showRepositoryUnavailable()
+    }
+
+    private fun checkoutLabel(ref: RevisionRef): String = when (ref.kind) {
+        RefKind.LOCAL_BRANCH -> message("menu.switch.branch", ref.displayName)
+        RefKind.REMOTE_BRANCH -> message("menu.checkout.remote", ref.displayName)
+        RefKind.TAG, RefKind.ANNOTATED_TAG -> message("menu.checkout.tag", ref.displayName)
+        else -> message("menu.checkout.ref", ref.displayName)
     }
 
     private fun showRepositoryUnavailable() {
@@ -384,6 +432,24 @@ internal class RevisionCompareService(private val project: Project) {
         return true
     }
 
+    fun compareWithHead(root: Path, selected: CompareRevision): Boolean {
+        val repository = findRepository(root) ?: return false
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.comparison"), true) {
+            private var selectedRevision = selected.hash
+            private var headRevision = "HEAD"
+            override fun run(indicator: ProgressIndicator) {
+                indicator.checkCanceled()
+                selectedRevision = verifiedRevision(repository, selected)
+                indicator.checkCanceled()
+                headRevision = repository.currentBranch?.name ?: "HEAD"
+            }
+            override fun onSuccess() {
+                if (!project.isDisposed) GitBrancher.getInstance(project).showDiff(selectedRevision, headRevision, listOf(repository))
+            }
+        })
+        return true
+    }
+
     fun compareRevisions(root: Path, base: CompareRevision, target: CompareRevision): Boolean {
         val repository = findRepository(root) ?: return false
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.comparison"), true) {
@@ -408,6 +474,28 @@ internal class RevisionCompareService(private val project: Project) {
             Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
         }.getOrNull()
         return if (resolved.equals(selected.hash, ignoreCase = true)) selected.revision else selected.hash
+    }
+
+    private fun findRepository(root: Path): GitRepository? {
+        val expected = root.toAbsolutePath().normalize()
+        return repositoryManager.repositories.firstOrNull { it.root.toNioPath().toAbsolutePath().normalize() == expected }
+    }
+}
+
+internal class RevisionCheckoutService(private val project: Project) {
+    private val repositoryManager = GitRepositoryManager.getInstance(project)
+    private val checkoutAction = GitCheckoutAction()
+
+    fun checkout(root: Path, selected: RevisionRef, event: AnActionEvent): Boolean {
+        val repository = findRepository(root) ?: return false
+        val reference: GitReference = (when (selected.kind) {
+            RefKind.LOCAL_BRANCH -> repository.branches.findLocalBranch(selected.displayName)
+            RefKind.REMOTE_BRANCH -> repository.branches.findRemoteBranch(selected.displayName)
+            RefKind.TAG, RefKind.ANNOTATED_TAG -> GitTag(selected.displayName)
+            else -> null
+        }) ?: return false
+        checkoutAction.actionPerformed(event, project, listOf(repository), reference)
+        return true
     }
 
     private fun findRepository(root: Path): GitRepository? {
@@ -488,6 +576,32 @@ internal class RevisionLogService(private val project: Project) {
         return true
     }
 
+    fun showRange(root: Path, base: CompareRevision, target: CompareRevision): Boolean {
+        val repository = findRepository(root) ?: return false
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.log"), true) {
+            private var baseRevision = base.hash
+            private var targetRevision = target.hash
+
+            override fun run(indicator: ProgressIndicator) {
+                indicator.checkCanceled()
+                baseRevision = verifiedRevision(repository, base)
+                indicator.checkCanceled()
+                targetRevision = verifiedRevision(repository, target)
+            }
+
+            override fun onSuccess() {
+                if (project.isDisposed) return
+                if (!VcsProjectLog.isAvailable(project)) return showLogUnavailable()
+                val filters = VcsLogFilterObject.collection(
+                    VcsLogFilterObject.fromRoot(repository.root),
+                    VcsLogFilterObject.fromRange(baseRevision, targetRevision),
+                )
+                openOrActivateLogTab(repository, "range:${base.hash}..${target.hash}", filters)
+            }
+        })
+        return true
+    }
+
     private fun filters(repository: GitRepository, target: RevisionLogTarget): VcsLogFilterCollection =
         VcsLogFilterObject.collection(
             VcsLogFilterObject.fromRoot(repository.root),
@@ -560,6 +674,14 @@ internal class RevisionLogService(private val project: Project) {
 
     private fun showLogUnavailable() {
         Messages.showWarningDialog(project, message("warning.log.unavailable"), message("dialog.title"))
+    }
+
+    private fun verifiedRevision(repository: GitRepository, selected: CompareRevision): String {
+        if (selected.revision == selected.hash) return selected.hash
+        val resolved = runCatching {
+            Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
+        }.getOrNull()
+        return if (resolved.equals(selected.hash, ignoreCase = true)) selected.revision else selected.hash
     }
 
     private fun findRepository(root: Path): GitRepository? {

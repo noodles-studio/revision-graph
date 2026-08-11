@@ -1,6 +1,7 @@
 package io.github.noodles_studio.revisiongraph.ui
 
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
+import io.github.noodles_studio.revisiongraph.model.HeadState
 import io.github.noodles_studio.revisiongraph.model.RefKind
 import io.github.noodles_studio.revisiongraph.model.RevisionRef
 
@@ -46,7 +47,26 @@ internal data class RevisionCompareSelection(
     val base: CompareRevision,
     val target: CompareRevision? = null,
     val active: CompareRevision = target ?: base,
+    val activeRef: RevisionRef? = null,
+    val activeRefs: List<RevisionRef> = emptyList(),
+    val head: HeadState? = null,
 )
+
+internal fun copyableRevisionText(refs: List<RevisionRef>, hash: String): String = refs
+    .map(RevisionRef::displayName)
+    .distinct()
+    .joinToString("\n")
+    .ifEmpty { hash }
+
+internal fun headDisplayName(head: HeadState?): String = head?.branch
+    ?: head?.hash?.take(8)?.let { "HEAD · $it" }
+    ?: "HEAD"
+
+internal fun checkoutAvailable(ref: RevisionRef, head: HeadState?): Boolean = when (ref.kind) {
+    RefKind.LOCAL_BRANCH -> ref.displayName != head?.branch
+    RefKind.REMOTE_BRANCH, RefKind.TAG, RefKind.ANNOTATED_TAG -> true
+    else -> false
+}
 
 internal sealed interface RevisionLogTarget {
     data class Reference(val name: String) : RevisionLogTarget

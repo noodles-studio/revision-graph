@@ -7,7 +7,9 @@ import io.github.noodles_studio.revisiongraph.model.RefKind
 import io.github.noodles_studio.revisiongraph.model.RevisionRef
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class RevisionSelectionTest {
     @Test fun `zoom percentage accepts presets and manual decimal input`() {
@@ -109,6 +111,33 @@ class RevisionSelectionTest {
         assertEquals(RevisionLogTarget.Commit("abc123"), revisionLogTarget(selected, "def456"))
         assertEquals(RevisionLogTarget.Commit("abc123"), revisionLogTarget(selected, null))
         assertEquals(RevisionLogTarget.Commit("abc123"), revisionLogTarget(CompareRevision("abc123", "abc123"), "abc123"))
+    }
+
+    @Test fun `copy uses all distinct display refs and falls back to full hash`() {
+        val refs = listOf(
+            RevisionRef("refs/heads/test", "abc123", RefKind.LOCAL_BRANCH),
+            RevisionRef("refs/remotes/origin/test", "abc123", RefKind.REMOTE_BRANCH),
+            RevisionRef("refs/heads/test", "abc123", RefKind.LOCAL_BRANCH),
+        )
+
+        assertEquals("test\norigin/test", copyableRevisionText(refs, "abc123"))
+        assertEquals("abc123", copyableRevisionText(emptyList(), "abc123"))
+    }
+
+    @Test fun `head display prefers branch and describes detached head`() {
+        assertEquals("test", headDisplayName(HeadState("abc123456789", "test", false)))
+        assertEquals("HEAD · abc12345", headDisplayName(HeadState("abc123456789", null, true)))
+        assertEquals("HEAD", headDisplayName(null))
+    }
+
+    @Test fun `checkout is offered for non-current branches and tags only`() {
+        val head = HeadState("a", "test", false)
+
+        assertFalse(checkoutAvailable(RevisionRef("refs/heads/test", "a", RefKind.LOCAL_BRANCH), head))
+        assertTrue(checkoutAvailable(RevisionRef("refs/heads/other", "b", RefKind.LOCAL_BRANCH), head))
+        assertTrue(checkoutAvailable(RevisionRef("refs/remotes/origin/test", "a", RefKind.REMOTE_BRANCH), head))
+        assertTrue(checkoutAvailable(RevisionRef("refs/tags/v1.0", "a", RefKind.TAG), head))
+        assertFalse(checkoutAvailable(RevisionRef("refs/stash", "a", RefKind.STASH), head))
     }
 
     private fun snapshot(head: HeadState, vararg refs: RevisionRef) = GraphSnapshot(
