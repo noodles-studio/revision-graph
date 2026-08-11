@@ -10,10 +10,31 @@ import java.nio.file.Path
 import java.util.concurrent.Executors
 
 class GitClient(private val project: Project) {
-    fun loadGraph(root: Path, indicator: ProgressIndicator): LoadResult<GraphSnapshot> = try {
-        val historyBytes = run(root, indicator, "log", "--all", "--parents", "--simplify-by-decoration",
-            "--topo-order", "--format=%H%x00%P%x00%at%x00%an%x00%ae%x00%s%x00%b", "-z")
-        if (historyBytes.isEmpty()) return LoadResult.Empty(message("git.repository.empty"))
+    internal fun loadGraph(
+        root: Path,
+        indicator: ProgressIndicator,
+        filter: RevisionGraphFilter = RevisionGraphFilter.NONE,
+    ): LoadResult<GraphSnapshot> = try {
+        if (filter.revisionsToValidate.any { revision ->
+                runText(root, indicator, true, "rev-parse", "--verify", "--end-of-options", "$revision^{commit}") == null
+            }) {
+            return LoadResult.Empty(message("git.filter.empty"))
+        }
+        val historyArguments = buildList {
+            add("log")
+            addAll(filter.revisionArguments())
+            addAll(listOf(
+                "--parents",
+                "--simplify-by-decoration",
+                "--topo-order",
+                "--format=%H%x00%P%x00%at%x00%an%x00%ae%x00%s%x00%b",
+                "-z",
+            ))
+        }
+        val historyBytes = run(root, indicator, *historyArguments.toTypedArray())
+        if (historyBytes.isEmpty()) {
+            return LoadResult.Empty(message(if (filter.isActive) "git.filter.empty" else "git.repository.empty"))
+        }
         val parsedCommits = GitParsers.history(ByteArrayInputStream(historyBytes)) { indicator.isCanceled }
         val loadedHashes = parsedCommits.mapTo(hashSetOf()) { it.hash }
         val boundaryParents = parsedCommits.asSequence().flatMap { it.parents.asSequence() }.filter { it !in loadedHashes }.distinct()

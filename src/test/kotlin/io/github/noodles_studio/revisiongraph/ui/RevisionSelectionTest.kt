@@ -5,6 +5,7 @@ import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import io.github.noodles_studio.revisiongraph.model.HeadState
 import io.github.noodles_studio.revisiongraph.model.RefKind
 import io.github.noodles_studio.revisiongraph.model.RevisionRef
+import io.github.noodles_studio.revisiongraph.git.RevisionGraphFilter
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -62,6 +63,33 @@ class RevisionSelectionTest {
         assertEquals(2, cyclicLocatorIndex(3, -1, reverse = true))
         assertEquals(2, cyclicLocatorIndex(3, 0, reverse = true))
         assertEquals(1, cyclicLocatorIndex(3, 2, reverse = true))
+    }
+
+    @Test fun `filter suggestions include readable and full ref names`() {
+        val graph = snapshot(
+            HeadState("a", "test", false),
+            RevisionRef("refs/heads/test", "a", RefKind.LOCAL_BRANCH),
+            RevisionRef("refs/remotes/origin/test", "a", RefKind.REMOTE_BRANCH),
+        )
+
+        val suggestions = revisionFilterSuggestions(graph)
+
+        assertTrue("HEAD" in suggestions)
+        assertTrue("test" in suggestions)
+        assertTrue("origin/test" in suggestions)
+        assertTrue("refs/heads/test" in suggestions)
+        assertTrue("remotes/origin/test" in suggestions)
+    }
+
+    @Test fun `filter focuses explicit tip before head and otherwise prefers head`() {
+        val graph = GraphSnapshot(
+            commits = listOf(CommitNode("a", emptyList(), 0, "head"), CommitNode("b", listOf("a"), 0, "feature")),
+            refsByCommit = mapOf("b" to listOf(RevisionRef("refs/heads/feature", "b", RefKind.LOCAL_BRANCH))),
+            head = HeadState("a", "test", false),
+        )
+
+        assertEquals("b", preferredFilterFocusHash(graph, RevisionGraphFilter(includedRevisions = listOf("feature"))))
+        assertEquals("a", preferredFilterFocusHash(graph, RevisionGraphFilter.NONE))
     }
 
     @Test fun `plain click selects base and clicking it again clears selection`() {
