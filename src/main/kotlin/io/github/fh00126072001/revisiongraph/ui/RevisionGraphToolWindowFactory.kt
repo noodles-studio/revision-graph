@@ -31,6 +31,7 @@ import git4idea.commands.Git
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryChangeListener
 import git4idea.repo.GitRepositoryManager
+import io.github.fh00126072001.revisiongraph.RevisionGraphBundle.message
 import io.github.fh00126072001.revisiongraph.git.GitClient
 import io.github.fh00126072001.revisiongraph.layout.GraphLayout
 import io.github.fh00126072001.revisiongraph.layout.LayeredDagLayoutEngine
@@ -47,6 +48,8 @@ import javax.swing.border.EmptyBorder
 
 class RevisionGraphToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
+        toolWindow.setStripeTitleProvider { message("toolwindow.title") }
+        toolWindow.title = message("toolwindow.title")
         val view = RevisionGraphView(project)
         val content = toolWindow.contentManager.factory.createContent(view.component, "", false)
         content.setDisposer(view)
@@ -69,11 +72,11 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private val cache = mutableMapOf<Path, Pair<GraphSnapshot, GraphLayout>>()
     private var roots = emptyList<Path>()
     private val rootBox = ComboBox<Path>()
-    private val refresh = JButton("Refresh")
+    private val refresh = JButton(message("toolbar.refresh"))
     private val graphSummary = JBLabel()
     private val zoomLabel = JBLabel("100%", SwingConstants.CENTER)
-    private val status = JBLabel("Loading…", SwingConstants.CENTER)
-    private val retry = JButton("Retry")
+    private val status = JBLabel(message("status.loading"), SwingConstants.CENTER)
+    private val retry = JButton(message("status.retry"))
     private val canvas = RevisionGraphCanvas()
     private val cards = JPanel(CardLayout())
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
@@ -88,17 +91,17 @@ private class RevisionGraphView(private val project: Project) : Disposable {
             border = EmptyBorder(7, 10, 7, 10)
             add(JPanel(FlowLayout(FlowLayout.LEADING, 7, 0)).apply {
                 isOpaque = false
-                add(JBLabel("Repository")); add(rootBox); add(refresh)
+                add(JBLabel(message("toolbar.repository"))); add(rootBox); add(refresh)
                 add(JSeparator(SwingConstants.VERTICAL).apply { preferredSize = java.awt.Dimension(1, 22) })
                 add(graphSummary)
             }, BorderLayout.WEST)
             add(JPanel(FlowLayout(FlowLayout.TRAILING, 4, 0)).apply {
                 isOpaque = false
-                add(toolbarButton("−", "Zoom out") { canvas.zoomOut() })
+                add(toolbarButton("−", message("toolbar.zoom.out")) { canvas.zoomOut() })
                 add(zoomLabel.apply { preferredSize = java.awt.Dimension(48, 26) })
-                add(toolbarButton("+", "Zoom in") { canvas.zoomIn() })
-                add(toolbarButton("Fit", "Fit graph to window") { canvas.fitToView() })
-                add(toolbarButton("1:1", "Reset to 100%") { canvas.resetView() })
+                add(toolbarButton("+", message("toolbar.zoom.in")) { canvas.zoomIn() })
+                add(toolbarButton(message("toolbar.fit"), message("toolbar.fit.tooltip")) { canvas.fitToView() })
+                add(toolbarButton("1:1", message("toolbar.reset.tooltip")) { canvas.resetView() })
             }, BorderLayout.EAST)
         }
         cards.add(canvas, "graph")
@@ -129,8 +132,11 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         })
         refreshRoots()
         if (roots.isEmpty()) {
-            showStatus("Waiting for Git repositories…", true)
-            alarm.addRequest({ refreshRoots(); if (currentRoot != null) load(false) else showStatus("No Git roots are configured for this project", true) }, 800)
+            showStatus(message("status.waiting.repositories"), true)
+            alarm.addRequest({
+                refreshRoots()
+                if (currentRoot != null) load(false) else showStatus(message("status.no.repositories"), true)
+            }, 800)
         } else load(false)
     }
 
@@ -155,11 +161,11 @@ private class RevisionGraphView(private val project: Project) : Disposable {
 
     private fun load(force: Boolean) {
         if (currentRoot == null) refreshRoots()
-        val root = currentRoot ?: return showStatus("No Git root selected. Refresh after IDEA finishes Git initialization.", true)
+        val root = currentRoot ?: return showStatus(message("status.no.selected.repository"), true)
         val id = generation.incrementAndGet(); graphIndicator?.cancel()
         if (!force) cache[root]?.let { (snapshot, layout) -> publish(snapshot, layout); return }
-        showStatus("Loading revision graph…", false)
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Loading Revision Graph", true) {
+        showStatus(message("status.loading.graph"), false)
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.loading.graph"), true) {
             private var result: LoadResult<Pair<GraphSnapshot, GraphLayout>>? = null
             override fun run(indicator: ProgressIndicator) {
                 graphIndicator = indicator
@@ -175,7 +181,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
                     is LoadResult.Success -> { cache[root] = value.value; publish(value.value.first, value.value.second) }
                     is LoadResult.Empty -> showStatus(value.reason, true)
                     is LoadResult.Failure -> showStatus("${value.summary}${value.details?.let { ": $it" }.orEmpty()}", true)
-                    else -> if (cache[root] == null) showStatus("Loading cancelled", true)
+                    else -> if (cache[root] == null) showStatus(message("status.loading.cancelled"), true)
                 }
             }
         })
@@ -183,7 +189,11 @@ private class RevisionGraphView(private val project: Project) : Disposable {
 
     private fun publish(snapshot: GraphSnapshot, layout: GraphLayout) {
         canvas.show(snapshot, layout); (cards.layout as CardLayout).show(cards, "graph")
-        graphSummary.text = "${snapshot.commits.size} commits  ·  ${snapshot.refsByCommit.values.sumOf { it.size }} refs"
+        graphSummary.text = message(
+            "status.graph.summary",
+            snapshot.commits.size,
+            snapshot.refsByCommit.values.sumOf { it.size },
+        )
     }
 
     private fun showStatus(text: String, canRetry: Boolean) {
@@ -195,16 +205,16 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         val base = selection.base
         val group = DefaultActionGroup()
         val target = selection.target
-        group.add(object : DumbAwareAction("查看 ${selection.active.displayName} 的提交记录") {
+        group.add(object : DumbAwareAction(message("menu.show.history", selection.active.displayName)) {
             override fun actionPerformed(e: AnActionEvent) = showLog(selection.active)
         })
         group.addSeparator()
         if (target == null) {
-            group.add(object : DumbAwareAction("${base.displayName} 与当前工作区比较差异") {
+            group.add(object : DumbAwareAction(message("menu.compare.workspace", base.displayName)) {
                 override fun actionPerformed(e: AnActionEvent) = compareWithWorkspace(base)
             })
         } else {
-            group.add(object : DumbAwareAction("比较 Ⅰ ${base.displayName} → Ⅱ ${target.displayName}") {
+            group.add(object : DumbAwareAction(message("menu.compare.revisions", base.displayName, target.displayName)) {
                 override fun actionPerformed(e: AnActionEvent) = compareRevisions(base, target)
             })
         }
@@ -232,7 +242,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     }
 
     private fun showRepositoryUnavailable() {
-        Messages.showWarningDialog(project, "The selected Git repository is no longer available. Refresh the revision graph and try again.", "Revision Graph")
+        Messages.showWarningDialog(project, message("warning.repository.unavailable"), message("dialog.title"))
     }
 
     override fun dispose() { generation.incrementAndGet(); graphIndicator?.cancel(); cache.clear() }
@@ -247,7 +257,7 @@ internal class RevisionCompareService(private val project: Project) {
 
     fun compareWithWorkspace(root: Path, selected: CompareRevision): Boolean {
         val repository = findRepository(root) ?: return false
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Preparing Revision Comparison", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.comparison"), true) {
             private var revision = selected.hash
             override fun run(indicator: ProgressIndicator) {
                 indicator.checkCanceled()
@@ -262,7 +272,7 @@ internal class RevisionCompareService(private val project: Project) {
 
     fun compareRevisions(root: Path, base: CompareRevision, target: CompareRevision): Boolean {
         val repository = findRepository(root) ?: return false
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Preparing Revision Comparison", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.comparison"), true) {
             private var baseRevision = base.hash
             private var targetRevision = target.hash
             override fun run(indicator: ProgressIndicator) {
@@ -301,7 +311,7 @@ internal class RevisionLogService(private val project: Project) {
 
     fun show(root: Path, selected: CompareRevision): Boolean {
         val repository = findRepository(root) ?: return false
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Preparing Git Log", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.log"), true) {
             private var commit: Hash? = null
             private var target: RevisionLogTarget = RevisionLogTarget.Commit(selected.hash)
 
@@ -339,7 +349,7 @@ internal class RevisionLogService(private val project: Project) {
     fun showShared(root: Path, selected: CompareRevision): Boolean {
         val repository = findRepository(root) ?: return false
         val requestId = sharedGeneration.incrementAndGet()
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Preparing Git Log", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.log"), true) {
             private var commitExists = false
             private var target: RevisionLogTarget = RevisionLogTarget.Commit(selected.hash)
 
@@ -435,7 +445,7 @@ internal class RevisionLogService(private val project: Project) {
     }
 
     private fun showLogUnavailable() {
-        Messages.showWarningDialog(project, "IDEA's Git Log is not available for the selected revision.", "Revision Graph")
+        Messages.showWarningDialog(project, message("warning.log.unavailable"), message("dialog.title"))
     }
 
     private fun findRepository(root: Path): GitRepository? {

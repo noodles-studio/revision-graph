@@ -3,6 +3,7 @@
     <name>Revision Graph</name>
     <vendor>fh00126072001</vendor>
     <description><![CDATA[An interactive, native IntelliJ revision graph backed by Git.]]></description>
+    <resource-bundle>messages.RevisionGraphBundle</resource-bundle>
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.vcs</depends>
     <depends>Git4Idea</depends>
@@ -16,7 +17,7 @@
     <actions>
         <action id="RevisionGraph.Open"
                 class="io.github.fh00126072001.revisiongraph.ui.OpenRevisionGraphAction"
-                text="Revision Graph" description="Open the revision graph">
+                text="%action.open.text" description="%action.open.description">
             <add-to-group group-id="Git.Menu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
         </action>

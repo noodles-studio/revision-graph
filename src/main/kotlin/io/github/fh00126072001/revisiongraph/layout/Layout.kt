@@ -1,5 +1,6 @@
 package io.github.fh00126072001.revisiongraph.layout
 
+import io.github.fh00126072001.revisiongraph.RevisionGraphBundle.message
 import io.github.fh00126072001.revisiongraph.model.CommitNode
 import io.github.fh00126072001.revisiongraph.model.GraphSnapshot
 import java.awt.geom.Point2D
@@ -378,7 +379,7 @@ class LayeredDagLayoutEngine(
         val detachedHeadRows = if (snapshot.head.hash == hash && snapshot.head.detached) 1 else 0
         val rows = refs.size + detachedHeadRows
         val labels = buildList {
-            if (detachedHeadRows == 1) add("HEAD · detached")
+            if (detachedHeadRows == 1) add(message("node.head.detached"))
             addAll(refs.map { ref ->
                 if (snapshot.head.hash == hash && snapshot.head.branch == ref.displayName) "HEAD · ${ref.displayName}" else ref.displayName
             })

@@ -1,6 +1,7 @@
 package io.github.fh00126072001.revisiongraph.ui
 
 import com.intellij.ui.JBColor
+import io.github.fh00126072001.revisiongraph.RevisionGraphBundle.message
 import io.github.fh00126072001.revisiongraph.layout.GraphLayout
 import io.github.fh00126072001.revisiongraph.layout.NodeLayout
 import io.github.fh00126072001.revisiongraph.model.GraphSnapshot
@@ -271,7 +272,7 @@ class RevisionGraphCanvas : JComponent() {
     }
 
     private fun visualRefs(model: GraphSnapshot, hash: String): List<VisualRef> = buildList {
-        if (model.head.hash == hash && model.head.detached) add(VisualRef("HEAD · detached", null, RefKind.OTHER, true))
+        if (model.head.hash == hash && model.head.detached) add(VisualRef(message("node.head.detached"), null, RefKind.OTHER, true))
         model.refsByCommit[hash].orEmpty().forEach { ref ->
             val head = model.head.hash == hash && model.head.branch == ref.displayName
             add(VisualRef(if (head) "HEAD · ${ref.displayName}" else ref.displayName, compareRevisionName(ref), ref.kind, head))
@@ -328,9 +329,11 @@ class RevisionGraphCanvas : JComponent() {
             append(commit.hash).append('\n')
             append(commit.author).append(" <").append(commit.email).append("> ").append(date)
             snapshot?.refsByCommit?.get(hash)?.takeIf { it.isNotEmpty() }?.let { refs ->
-                append("\nRefs: ").append(refs.joinToString { it.fullName })
+                append('\n').append(message("tooltip.refs", refs.joinToString { it.fullName }))
             }
-            if (snapshot?.head?.hash == hash && snapshot?.head?.detached == true) append("\nHEAD: detached")
+            if (snapshot?.head?.hash == hash && snapshot?.head?.detached == true) {
+                append('\n').append(message("tooltip.head.detached"))
+            }
             append("\n\n").append(commit.subject).append('\n').append(commit.body)
         }.let { if (it.length <= 8000) it else it.take(8000) + "..." }
         "<html><pre>${escape(text)}</pre></html>"

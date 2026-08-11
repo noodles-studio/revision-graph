@@ -3,6 +3,7 @@ package io.github.fh00126072001.revisiongraph.git
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import git4idea.config.GitExecutableManager
+import io.github.fh00126072001.revisiongraph.RevisionGraphBundle.message
 import io.github.fh00126072001.revisiongraph.model.*
 import java.io.ByteArrayInputStream
 import java.nio.file.Path
@@ -12,7 +13,7 @@ class GitClient(private val project: Project) {
     fun loadGraph(root: Path, indicator: ProgressIndicator): LoadResult<GraphSnapshot> = try {
         val historyBytes = run(root, indicator, "log", "--all", "--parents", "--simplify-by-decoration",
             "--topo-order", "--format=%H%x00%P%x00%at%x00%an%x00%ae%x00%s%x00%b", "-z")
-        if (historyBytes.isEmpty()) return LoadResult.Empty("The repository has no commits yet")
+        if (historyBytes.isEmpty()) return LoadResult.Empty(message("git.repository.empty"))
         val parsedCommits = GitParsers.history(ByteArrayInputStream(historyBytes)) { indicator.isCanceled }
         val loadedHashes = parsedCommits.mapTo(hashSetOf()) { it.hash }
         val boundaryParents = parsedCommits.asSequence().flatMap { it.parents.asSequence() }.filter { it !in loadedHashes }.distinct()
@@ -28,9 +29,9 @@ class GitClient(private val project: Project) {
     } catch (_: InterruptedException) {
         LoadResult.Cancelled
     } catch (e: GitCommandException) {
-        LoadResult.Failure("Git command failed", e.message)
+        LoadResult.Failure(message("git.command.failed"), e.message)
     } catch (e: Exception) {
-        LoadResult.Failure("Unable to parse repository history", e.message)
+        LoadResult.Failure(message("git.history.parse.failed"), e.message)
     }
 
     private fun runText(root: Path, indicator: ProgressIndicator, allowFailure: Boolean, vararg args: String): String? =
