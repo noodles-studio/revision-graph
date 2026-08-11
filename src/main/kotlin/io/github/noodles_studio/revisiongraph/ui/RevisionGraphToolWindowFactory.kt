@@ -158,11 +158,24 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         })
     }
     private val cards = JPanel(CardLayout())
-    private val watermark = object : JBLabel(message("watermark.powered.by")) {
+    private val watermark = object : JPanel() {
+        init {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(JBLabel(message("watermark.powered.by")).apply {
+                alignmentX = Component.RIGHT_ALIGNMENT
+                foreground = JBColor(Color(0x8C949E), Color(0x6F737A))
+                font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(10f))
+            })
+            add(Box.createVerticalStrut(JBUI.scale(1)))
+            add(JBLabel(message("watermark.built.with.codex")).apply {
+                alignmentX = Component.RIGHT_ALIGNMENT
+                foreground = JBColor(Color(0xA5ABB3), Color(0x5E6268))
+                font = font.deriveFont(Font.PLAIN, (font.size2D - 2f).coerceAtLeast(9f))
+            })
+        }
+
         override fun contains(x: Int, y: Int): Boolean = false
-    }.apply {
-        foreground = JBColor(Color(0x8C949E), Color(0x6F737A))
-        font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(10f))
     }
     private val graphArea = object : JLayeredPane() {
         init {

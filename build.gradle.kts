@@ -43,4 +43,8 @@ intellijPlatform {
 tasks {
     test { useJUnitPlatform() }
     runIde { jvmArgs("-Xmx2g") }
+    processResources {
+        from("LICENSE") { into("META-INF") }
+        from("LICENSE-NOTICE.md") { into("META-INF") }
+    }
 }
