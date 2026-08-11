@@ -20,6 +20,50 @@ class RevisionSelectionTest {
         assertNull(parseZoomPercent("0%"))
     }
 
+    @Test fun `revision locator ranks exact current and local refs before remote and tags`() {
+        val hashA = "a".repeat(40)
+        val hashB = "b".repeat(40)
+        val hashC = "c".repeat(40)
+        val refs = mapOf(
+            hashA to listOf(RevisionRef("refs/heads/test", hashA, RefKind.LOCAL_BRANCH)),
+            hashB to listOf(RevisionRef("refs/remotes/origin/test", hashB, RefKind.REMOTE_BRANCH)),
+            hashC to listOf(RevisionRef("refs/tags/test-release", hashC, RefKind.TAG)),
+        )
+        val snapshot = GraphSnapshot(
+            listOf(CommitNode(hashA, emptyList(), 0, "a"), CommitNode(hashB, emptyList(), 0, "b"), CommitNode(hashC, emptyList(), 0, "c")),
+            refs,
+            HeadState(hashA, "test", false),
+        )
+
+        val results = findRevisionRefs(snapshot, "test")
+
+        assertEquals(listOf("test", "origin/test", "test-release"), results.map { it.displayName })
+        assertTrue(results.first().current)
+    }
+
+    @Test fun `revision locator matches full ref names case insensitively`() {
+        val commits = (0..3).map { index -> CommitNode(index.toString().repeat(40), emptyList(), 0, "$index") }
+        val refs = commits.associate { commit ->
+            commit.hash to listOf(RevisionRef("refs/remotes/Origin/Feature-${commit.subject}", commit.hash, RefKind.REMOTE_BRANCH))
+        }
+        val snapshot = GraphSnapshot(commits, refs, HeadState(null, null, false))
+
+        val results = findRevisionRefs(snapshot, "REFS/REMOTES/ORIGIN/FEATURE")
+
+        assertEquals(4, results.size)
+        assertTrue(results.all { it.kind == RefKind.REMOTE_BRANCH })
+        assertTrue(findRevisionRefs(snapshot, "   ").isEmpty())
+    }
+
+    @Test fun `revision locator cycles forward and backward like original find next`() {
+        assertEquals(0, cyclicLocatorIndex(3, -1, reverse = false))
+        assertEquals(1, cyclicLocatorIndex(3, 0, reverse = false))
+        assertEquals(0, cyclicLocatorIndex(3, 2, reverse = false))
+        assertEquals(2, cyclicLocatorIndex(3, -1, reverse = true))
+        assertEquals(2, cyclicLocatorIndex(3, 0, reverse = true))
+        assertEquals(1, cyclicLocatorIndex(3, 2, reverse = true))
+    }
+
     @Test fun `plain click selects base and clicking it again clears selection`() {
         val selected = RevisionSelection.EMPTY.click("a", additive = false)
 

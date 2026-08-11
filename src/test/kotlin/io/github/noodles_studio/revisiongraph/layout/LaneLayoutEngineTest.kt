@@ -40,7 +40,19 @@ class LayeredDagLayoutEngineTest {
             RevisionRef("refs/tags/v1", commit.hash, RefKind.TAG),
         )
         val layout = LayeredDagLayoutEngine().layout(GraphSnapshot(listOf(commit), mapOf(commit.hash to refs), HeadState(commit.hash, "main", false)))
-        assertEquals(84.0, layout.nodes.single().bounds.height)
+        assertEquals(EstimatedGraphTextMetrics.rowHeight() * 3, layout.nodes.single().bounds.height)
+    }
+
+    @Test fun `complete ref names are measured without the old width cap`() {
+        val commit = node('a')
+        val longName = "feature/" + "wide-branch-name-".repeat(8)
+        val ref = RevisionRef("refs/heads/$longName", commit.hash, RefKind.LOCAL_BRANCH)
+        val layout = LayeredDagLayoutEngine().layout(
+            GraphSnapshot(listOf(commit), mapOf(commit.hash to listOf(ref)), HeadState(null, null, false)),
+        )
+
+        assertTrue(layout.nodes.single().bounds.width > 252.0)
+        assertTrue(layout.nodes.single().bounds.width >= EstimatedGraphTextMetrics.textWidth(longName, false) + 40.0)
     }
 
     @Test fun `wide nodes on the same layer keep the configured safety gap`() {
@@ -119,7 +131,7 @@ class LayeredDagLayoutEngineTest {
         val tag = RevisionRef("refs/tags/v1", a.hash, RefKind.TAG)
         val layout = LayeredDagLayoutEngine().layout(GraphSnapshot(listOf(a, b), mapOf(a.hash to listOf(tag)), HeadState(a.hash, null, true)))
 
-        assertEquals(56.0, layout.byHash.getValue(a.hash).bounds.height)
+        assertEquals(EstimatedGraphTextMetrics.rowHeight() * 2, layout.byHash.getValue(a.hash).bounds.height)
         assertTrue(layout.byHash.getValue(b.hash).bounds.minY - layout.byHash.getValue(a.hash).bounds.maxY >= 30.0)
     }
 

@@ -23,6 +23,7 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ToolWindowId
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.components.*
+import com.intellij.ui.SearchTextField
 import com.intellij.ui.content.Content
 import com.intellij.util.Alarm
 import com.intellij.util.ui.JBUI
@@ -42,6 +43,7 @@ import git4idea.repo.GitRepositoryManager
 import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
 import io.github.noodles_studio.revisiongraph.git.GitClient
 import io.github.noodles_studio.revisiongraph.layout.GraphLayout
+import io.github.noodles_studio.revisiongraph.layout.GraphTypography
 import io.github.noodles_studio.revisiongraph.layout.LayeredDagLayoutEngine
 import io.github.noodles_studio.revisiongraph.model.*
 import java.awt.BorderLayout
@@ -52,10 +54,14 @@ import java.awt.FlowLayout
 import java.awt.Point
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
+import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.lang.ref.WeakReference
 import java.nio.file.Path
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 import javax.swing.*
 import javax.swing.border.EmptyBorder
 
@@ -99,9 +105,16 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         toolTipText = message("toolbar.zoom.percent")
     }
     private val graphSummary = JBLabel()
+    private val locatorField = SearchTextField(false).apply {
+        textEditor.emptyText.text = message("toolbar.locate.placeholder")
+        preferredSize = JBUI.size(250, 26)
+        minimumSize = JBUI.size(180, 26)
+        toolTipText = message("toolbar.locate.tooltip")
+    }
     private val status = JBLabel(message("status.loading"), SwingConstants.CENTER)
     private val retry = JButton(message("status.retry"))
-    private val canvas = RevisionGraphCanvas()
+    private val typography = GraphTypography.fromIdeaDefaults()
+    private val canvas = RevisionGraphCanvas(typography)
     private val cards = JPanel(CardLayout())
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var currentRoot: Path? = null
@@ -111,6 +124,10 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private var updatingRoots = false
     private var updatingZoom = false
     private var graphLoading = false
+    private var locatorSnapshot: GraphSnapshot? = null
+    private var locatorQuery = ""
+    private var locatorMatches = emptyList<RevisionLocatorResult>()
+    private var locatorMatchIndex = -1
     private val refreshAction = object : DumbAwareAction(
         message("toolbar.refresh"),
         message("toolbar.refresh.tooltip"),
@@ -141,11 +158,16 @@ private class RevisionGraphView(private val project: Project) : Disposable {
                 add(JSeparator(SwingConstants.VERTICAL).apply { preferredSize = java.awt.Dimension(1, 22) })
                 add(graphSummary)
             }, BorderLayout.WEST)
+            add(JPanel(FlowLayout(FlowLayout.LEADING, 7, 0)).apply {
+                isOpaque = false
+                add(locatorField)
+            }, BorderLayout.CENTER)
             add(JPanel(FlowLayout(FlowLayout.TRAILING, 4, 0)).apply {
                 isOpaque = false
                 add(toolbarButton("−", message("toolbar.zoom.out")) { canvas.zoomOut() })
                 add(zoomBox)
                 add(toolbarButton("+", message("toolbar.zoom.in")) { canvas.zoomIn() })
+                add(toolbarButton("1:1", message("toolbar.zoom.actual")) { canvas.setZoomPercent(100.0) })
                 add(fitButton())
             }, BorderLayout.EAST)
         }
@@ -165,6 +187,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
             val selected = rootBox.selectedItem as? Path
             if (selected != null && selected != currentRoot) {
                 canvas.clearSelection()
+                clearLocator()
                 currentRoot = selected
                 load(false)
             }
@@ -172,6 +195,25 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         zoomBox.addActionListener { if (!updatingZoom) applyZoomFromEditor() }
         (zoomBox.editor.editorComponent as? JTextField)?.addFocusListener(object : FocusAdapter() {
             override fun focusLost(e: FocusEvent) = applyZoomFromEditor()
+        })
+        locatorField.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = resetLocatorSearch()
+            override fun removeUpdate(e: DocumentEvent) = resetLocatorSearch()
+            override fun changedUpdate(e: DocumentEvent) = resetLocatorSearch()
+        })
+        locatorField.addKeyboardListener(object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                when (e.keyCode) {
+                    KeyEvent.VK_ENTER -> {
+                        locateNextRevision(reverse = e.isShiftDown)
+                        e.consume()
+                    }
+                    KeyEvent.VK_ESCAPE -> {
+                        locatorField.text = ""
+                        e.consume()
+                    }
+                }
+            }
         })
         retry.addActionListener { refreshGraph() }
         canvas.onContextMenu = ::showContextMenu
@@ -213,7 +255,10 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         try {
             rootBox.model = DefaultComboBoxModel(discovered.toTypedArray())
             currentRoot = previous?.takeIf { it in discovered } ?: discovered.firstOrNull()
-            if (currentRoot != previous) canvas.clearSelection()
+            if (currentRoot != previous) {
+                canvas.clearSelection()
+                clearLocator()
+            }
             rootBox.selectedItem = currentRoot
             rootBox.isVisible = discovered.size > 1
         } finally { updatingRoots = false }
@@ -240,6 +285,46 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private fun updateZoomBox(percent: Int) {
         updatingZoom = true
         try { zoomBox.editor.item = "$percent%" } finally { updatingZoom = false }
+    }
+
+    private fun locateNextRevision(reverse: Boolean) {
+        val query = locatorField.text.trim()
+        if (query.isEmpty()) return
+        val normalized = query.lowercase(Locale.ROOT)
+        if (normalized != locatorQuery) {
+            locatorQuery = normalized
+            locatorMatches = findRevisionRefs(locatorSnapshot, query)
+            locatorMatchIndex = -1
+        }
+        if (locatorMatches.isEmpty()) {
+            setLocatorError(true, query)
+            return
+        }
+        setLocatorError(false)
+        locatorMatchIndex = cyclicLocatorIndex(locatorMatches.size, locatorMatchIndex, reverse)
+        val result = locatorMatches[locatorMatchIndex]
+        canvas.locateRevision(result.hash, result.revision)
+        locatorField.addCurrentTextToHistory()
+    }
+
+    private fun resetLocatorSearch() {
+        locatorQuery = ""
+        locatorMatches = emptyList()
+        locatorMatchIndex = -1
+        setLocatorError(false)
+    }
+
+    private fun setLocatorError(error: Boolean, query: String = "") {
+        locatorField.textEditor.putClientProperty("JComponent.outline", if (error) "error" else null)
+        locatorField.toolTipText = if (error) message("toolbar.locate.no.matches", query) else message("toolbar.locate.tooltip")
+        locatorField.textEditor.toolTipText = locatorField.toolTipText
+        locatorField.repaint()
+    }
+
+    private fun clearLocator() {
+        locatorSnapshot = null
+        locatorField.text = ""
+        resetLocatorSearch()
     }
 
     private fun fitButton() = JButton("${message("toolbar.fit")} ▾").apply {
@@ -286,7 +371,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
             override fun run(indicator: ProgressIndicator) {
                 graphIndicator = indicator
                 result = when (val loaded = git.loadGraph(root, indicator)) {
-                    is LoadResult.Success -> try { LoadResult.Success(loaded.value to LayeredDagLayoutEngine().layout(loaded.value) { indicator.isCanceled }) }
+                    is LoadResult.Success -> try { LoadResult.Success(loaded.value to LayeredDagLayoutEngine(textMetrics = typography).layout(loaded.value) { indicator.isCanceled }) }
                         catch (_: InterruptedException) { LoadResult.Cancelled }
                     is LoadResult.Empty -> loaded; is LoadResult.Failure -> loaded; LoadResult.Cancelled -> LoadResult.Cancelled
                 }
@@ -314,6 +399,8 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         val focusHead = shouldFocusHead(publishedRoot, publishedHead, root, snapshot.head)
         publishedRoot = root
         publishedHead = snapshot.head
+        locatorSnapshot = snapshot
+        resetLocatorSearch()
         canvas.show(snapshot, layout, snapshot.head.hash?.takeIf { focusHead })
         (cards.layout as CardLayout).show(cards, "graph")
         updateGraphSummary(snapshot)
@@ -432,6 +519,67 @@ internal fun parseZoomPercent(value: Any?): Double? = value?.toString()
     ?.replace(',', '.')
     ?.toDoubleOrNull()
     ?.takeIf { it.isFinite() && it > 0.0 }
+
+internal data class RevisionLocatorResult(
+    val displayName: String,
+    val fullName: String,
+    val hash: String,
+    val revision: String,
+    val kind: RefKind,
+    val current: Boolean,
+)
+
+internal fun findRevisionRefs(snapshot: GraphSnapshot?, rawQuery: String): List<RevisionLocatorResult> {
+    val model = snapshot ?: return emptyList()
+    val query = rawQuery.trim().lowercase(Locale.ROOT)
+    if (query.isEmpty()) return emptyList()
+    return model.refsByCommit.values.asSequence().flatten().map { ref ->
+        RevisionLocatorResult(
+            ref.displayName,
+            ref.fullName,
+            ref.target,
+            compareRevisionName(ref) ?: ref.target,
+            ref.kind,
+            model.head.hash == ref.target && model.head.branch == ref.displayName,
+        )
+    }.filter { result ->
+        result.displayName.lowercase(Locale.ROOT).contains(query) ||
+            result.fullName.lowercase(Locale.ROOT).contains(query)
+    }.sortedWith(
+        compareBy<RevisionLocatorResult> { locatorExactRank(it, query) }
+            .thenBy { if (it.current) 0 else 1 }
+            .thenBy { locatorKindRank(it.kind) }
+            .thenBy { locatorMatchRank(it, query) }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.displayName }
+            .thenBy { it.fullName },
+    ).toList()
+}
+
+internal fun cyclicLocatorIndex(size: Int, current: Int, reverse: Boolean): Int {
+    require(size > 0)
+    return if (reverse) {
+        if (current <= 0) size - 1 else current - 1
+    } else {
+        if (current < 0 || current >= size - 1) 0 else current + 1
+    }
+}
+
+private fun locatorExactRank(result: RevisionLocatorResult, query: String): Int =
+    if (result.displayName.equals(query, ignoreCase = true) || result.fullName.equals(query, ignoreCase = true)) 0 else 1
+
+private fun locatorMatchRank(result: RevisionLocatorResult, query: String): Int = when {
+    result.displayName.lowercase(Locale.ROOT).startsWith(query) -> 0
+    result.fullName.lowercase(Locale.ROOT).startsWith(query) -> 1
+    else -> 2
+}
+
+private fun locatorKindRank(kind: RefKind): Int = when (kind) {
+    RefKind.LOCAL_BRANCH -> 0
+    RefKind.REMOTE_BRANCH -> 1
+    RefKind.TAG, RefKind.ANNOTATED_TAG -> 2
+    else -> 3
+}
+
 
 internal fun shouldFocusHead(
     previousRoot: Path?,

@@ -43,13 +43,13 @@ data class GraphLayout(
  * Sugiyama pipeline. Long edges receive virtual vertices, layers are reordered with
  * weighted median sweeps, and coordinates are compacted from measured node bounds.
  */
-class LayeredDagLayoutEngine(
+internal class LayeredDagLayoutEngine(
     private val nodeGap: Double = 25.0,
     private val layerGap: Double = 30.0,
     private val dummyGap: Double = 14.0,
     private val componentGap: Double = 72.0,
-    private val nodeHeight: Double = 36.0,
     private val graphPadding: Double = 24.0,
+    private val textMetrics: GraphTextMetrics = EstimatedGraphTextMetrics,
 ) {
     fun layout(snapshot: GraphSnapshot, cancelled: () -> Boolean = { false }): GraphLayout {
         val ordered = normalize(snapshot, cancelled)
@@ -378,15 +378,15 @@ class LayeredDagLayoutEngine(
         val refs = snapshot.refsByCommit[hash].orEmpty()
         val detachedHeadRows = if (snapshot.head.hash == hash && snapshot.head.detached) 1 else 0
         val rows = refs.size + detachedHeadRows
-        val labels = buildList {
-            if (detachedHeadRows == 1) add(message("node.head.detached"))
+        val labels = buildList<Pair<String, Boolean>> {
+            if (detachedHeadRows == 1) add(message("node.head.detached") to true)
             addAll(refs.map { ref ->
-                if (snapshot.head.hash == hash && snapshot.head.branch == ref.displayName) "HEAD · ${ref.displayName}" else ref.displayName
+                val head = snapshot.head.hash == hash && snapshot.head.branch == ref.displayName
+                (if (head) "HEAD · ${ref.displayName}" else ref.displayName) to head
             })
         }
-        val longest = labels.maxOfOrNull { it.take(31).length } ?: 10
-        val width = (longest * 7.2 + 30.0).coerceIn(112.0, 252.0)
-        val height = if (rows == 0) nodeHeight else max(nodeHeight, rows * 28.0)
+        val width = textMetrics.nodeWidth(labels)
+        val height = textMetrics.rowHeight() * max(1, rows)
         return NodeSize(width, height)
     }
 

@@ -3,6 +3,8 @@ package io.github.noodles_studio.revisiongraph.ui
 import com.intellij.ui.JBColor
 import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
 import io.github.noodles_studio.revisiongraph.layout.GraphLayout
+import io.github.noodles_studio.revisiongraph.layout.GraphTypography
+import io.github.noodles_studio.revisiongraph.layout.graphTextLeft
 import io.github.noodles_studio.revisiongraph.layout.NodeLayout
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import io.github.noodles_studio.revisiongraph.model.RefKind
@@ -25,7 +27,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** RevisionGraph-style block topology with IDEA-aware colors and interaction. */
-class RevisionGraphCanvas : JComponent() {
+internal class RevisionGraphCanvas(private val typography: GraphTypography = GraphTypography.fromIdeaDefaults()) : JComponent() {
     internal var onContextMenu: ((RevisionCompareSelection, Point) -> Unit)? = null
     internal var onRevisionSelected: ((CompareRevision) -> Unit)? = null
     var onZoomChanged: ((Int) -> Unit)? = null
@@ -116,6 +118,17 @@ class RevisionGraphCanvas : JComponent() {
     fun setZoomPercent(percent: Double) = zoomAt(percent.coerceIn(12.0, 350.0) / 100.0 / scale, Point(width / 2, height / 2))
     fun resetView() { pendingFocusHash = null; scale = 1.0; offsetX = 28.0; offsetY = 22.0; zoomChanged(); repaint() }
 
+    fun locateRevision(hash: String, revision: String) {
+        val graph = layout ?: return
+        if (hash !in graph.byHash) return
+        pendingFocusHash = hash
+        updateSelection(
+            RevisionSelection(hash, activeHash = hash),
+            HitTarget(hash, revision),
+        )
+        repaint()
+    }
+
     fun fitToView() {
         val graph = layout ?: return
         if (width < 50 || height < 50) return
@@ -166,9 +179,7 @@ class RevisionGraphCanvas : JComponent() {
             transform(AffineTransform.getTranslateInstance(offsetX, offsetY)); scale(scale, scale)
         }
         val visible = screenToWorld(Rectangle(0, 0, width, height))
-        val highlighted = highlightedEdges(model)
-        drawEdges(g2, graph, visible, highlighted, false)
-        if (selection.baseHash != null) drawEdges(g2, graph, visible, highlighted, true)
+        drawEdges(g2, graph, visible)
         graph.index.query(expand(visible, 8.0, 8.0)).forEach { drawNode(g2, model, it) }
         g2.dispose()
     }
@@ -182,15 +193,14 @@ class RevisionGraphCanvas : JComponent() {
         pendingFocusHash = null
     }
 
-    private fun drawEdges(g: Graphics2D, graph: GraphLayout, visible: Rectangle2D, highlighted: Set<Pair<String, String>>, highlightPass: Boolean) {
-        graph.edges.asSequence().filter { ((it.child to it.parent) in highlighted) == highlightPass }.forEach { edge ->
+    private fun drawEdges(g: Graphics2D, graph: GraphLayout, visible: Rectangle2D) {
+        graph.edges.forEach { edge ->
             val child = graph.byHash[edge.child] ?: return@forEach
             val parent = graph.byHash[edge.parent] ?: return@forEach
             if (!edge.points.zipWithNext().any { (from, to) -> visible.intersectsLine(from.x, from.y, to.x, to.y) } &&
                 !child.bounds.intersects(visible) && !parent.bounds.intersects(visible)) return@forEach
-            val edgeColor = if (highlightPass) laneColor(child.lane) else JBColor(Color(0x626A73), Color(0xA4ABB4))
-            g.color = edgeColor
-            g.stroke = BasicStroke(if (highlightPass) 2.25f else 1.55f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g.color = JBColor(Color(0x626A73), Color(0xA4ABB4))
+            g.stroke = BasicStroke(1.55f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
             val path = straightPolylinePath(edge.points)
             g.draw(path)
             drawArrow(g, edge.points)
@@ -245,10 +255,6 @@ class RevisionGraphCanvas : JComponent() {
         }
         val b = node.bounds
 
-        if (marker != null) {
-            g.color = marker.halo
-            g.fillRoundRect((b.x - 4).toInt(), (b.y - 4).toInt(), (b.width + 8).toInt(), (b.height + 8).toInt(), 13, 13)
-        }
         g.color = JBColor(Color(0xD8DCE2), Color(0x101113))
         g.fillRoundRect((b.x + 2).toInt(), (b.y + 3).toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
         g.color = JBColor(Color.WHITE, Color(0x303236)); g.fillRoundRect(b.x.toInt(), b.y.toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
@@ -271,15 +277,19 @@ class RevisionGraphCanvas : JComponent() {
 
         if (scale > .3) {
             if (refs.isEmpty()) {
-                g.font = font.deriveFont(Font.BOLD, 11f); g.color = JBColor.foreground()
+                g.font = typography.font(true); g.color = JBColor.foreground()
                 val revision = commit.hash.take(8)
-                g.drawString(revision, (b.centerX - g.fontMetrics.stringWidth(revision) / 2.0).toFloat(), (b.centerY + 4).toFloat())
+                val metrics = g.fontMetrics
+                val baseline = b.centerY - metrics.height / 2.0 + metrics.ascent
+                g.drawString(revision, (b.centerX - metrics.stringWidth(revision) / 2.0).toFloat(), baseline.toFloat())
             } else {
                 val rowHeight = b.height / refs.size
                 refs.forEachIndexed { index, ref ->
-                    g.font = font.deriveFont(if (ref.head) Font.BOLD else Font.PLAIN, 11f)
+                    g.font = typography.font(ref.head)
                     g.color = refText(ref.kind, ref.head)
-                    g.drawString(ellipsize(ref.text, 31), (b.x + 13).toFloat(), (b.y + index * rowHeight + rowHeight / 2 + 4).toFloat())
+                    val metrics = g.fontMetrics
+                    val baseline = b.y + index * rowHeight + (rowHeight - metrics.height) / 2.0 + metrics.ascent
+                    g.drawString(ref.text, graphTextLeft(b.x), baseline.toFloat())
                     if (index > 0) {
                         g.color = JBColor(Color(0xD7DADE), Color(0x4A4D51))
                         g.drawLine((b.x + 6).toInt(), (b.y + index * rowHeight).toInt(), (b.maxX - 5).toInt(), (b.y + index * rowHeight).toInt())
@@ -298,16 +308,16 @@ class RevisionGraphCanvas : JComponent() {
         val ref: RevisionRef? = null,
     )
 
-    private enum class SelectionMarker(val color: JBColor, val halo: JBColor) {
-        BASE(JBColor(Color(0x1E6FB8), Color(0x65B3F3)), JBColor(Color(0xD6E8FF), Color(0x355373))),
-        TARGET(JBColor(Color(0x8A2638), Color(0xE06C75)), JBColor(Color(0xF5DCE1), Color(0x59323A))),
+    private enum class SelectionMarker(val color: JBColor) {
+        BASE(JBColor(Color(0x1E6FB8), Color(0x65B3F3))),
+        TARGET(JBColor(Color(0x8A2638), Color(0xE06C75))),
     }
 
     private fun drawSelectionMarker(g: Graphics2D, bounds: Rectangle2D.Double, marker: SelectionMarker) {
         val oldStroke = g.stroke
         g.color = marker.color
-        g.stroke = BasicStroke(2.2f)
-        g.drawRoundRect((bounds.x - 2).toInt(), (bounds.y - 2).toInt(), (bounds.width + 4).toInt(), (bounds.height + 4).toInt(), 12, 12)
+        g.stroke = BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        g.drawRoundRect(bounds.x.toInt(), bounds.y.toInt(), bounds.width.toInt(), bounds.height.toInt(), 10, 10)
         g.stroke = oldStroke
     }
 
@@ -350,16 +360,6 @@ class RevisionGraphCanvas : JComponent() {
         RefKind.BISECT_BAD, RefKind.BISECT_SKIP -> JBColor(Color(0x822F2F), Color(0xF0AAAA))
         RefKind.NOTES -> JBColor(Color(0x286973), Color(0xA9DCE1))
         RefKind.OTHER -> JBColor.foreground()
-    }
-
-    private fun highlightedEdges(model: GraphSnapshot): Set<Pair<String, String>> {
-        val start = selection.baseHash ?: return emptySet()
-        val edges = linkedSetOf<Pair<String, String>>(); val seen = hashSetOf<String>(); val queue = ArrayDeque<String>(); queue += start
-        while (queue.isNotEmpty()) {
-            val hash = queue.removeFirst(); if (!seen.add(hash)) continue
-            model.commitsByHash[hash]?.parents?.filter { it in model.commitsByHash }?.forEach { edges += hash to it; queue += it }
-        }
-        return edges
     }
 
     override fun getToolTipText(event: MouseEvent): String? = hitTarget(event.point)?.hash?.let { hash ->
@@ -459,6 +459,5 @@ class RevisionGraphCanvas : JComponent() {
         val p = screenToWorld(Point2D.Double(rect.x.toDouble(), rect.y.toDouble()))
         return Rectangle2D.Double(p.x, p.y, max(1.0, rect.width / scale), max(1.0, rect.height / scale))
     }
-    private fun ellipsize(value: String, max: Int) = if (value.length <= max) value else value.take(max - 1) + "…"
     private fun escape(value: String) = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 }
