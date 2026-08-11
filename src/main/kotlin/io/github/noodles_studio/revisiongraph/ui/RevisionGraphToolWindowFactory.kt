@@ -11,6 +11,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
@@ -58,7 +59,7 @@ import java.util.concurrent.atomic.AtomicLong
 import javax.swing.*
 import javax.swing.border.EmptyBorder
 
-class RevisionGraphToolWindowFactory : ToolWindowFactory {
+class RevisionGraphToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         toolWindow.setStripeTitleProvider { message("toolwindow.title") }
         toolWindow.title = message("toolwindow.title")
@@ -104,6 +105,8 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private val cards = JPanel(CardLayout())
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var currentRoot: Path? = null
+    private var publishedRoot: Path? = null
+    private var publishedHead: HeadState? = null
     private var graphIndicator: ProgressIndicator? = null
     private var updatingRoots = false
     private var updatingZoom = false
@@ -274,8 +277,10 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         }
         val id = generation.incrementAndGet(); graphIndicator?.cancel()
         if (!force) cache[root]?.let { (snapshot, layout) -> publish(snapshot, layout); return }
+        val keepGraphVisible = publishedRoot == root && cache[root] != null
         setGraphLoading(true)
-        showStatus(message("status.loading.graph"), false)
+        if (keepGraphVisible) graphSummary.text = message("status.refreshing.graph")
+        else showStatus(message("status.loading.graph"), false)
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.loading.graph"), true) {
             private var result: LoadResult<Pair<GraphSnapshot, GraphLayout>>? = null
             override fun run(indicator: ProgressIndicator) {
@@ -292,15 +297,29 @@ private class RevisionGraphView(private val project: Project) : Disposable {
                 when (val value = result) {
                     is LoadResult.Success -> { cache[root] = value.value; publish(value.value.first, value.value.second) }
                     is LoadResult.Empty -> showStatus(value.reason, true)
-                    is LoadResult.Failure -> showStatus("${value.summary}${value.details?.let { ": $it" }.orEmpty()}", true)
-                    else -> if (cache[root] == null) showStatus(message("status.loading.cancelled"), true)
+                    is LoadResult.Failure -> {
+                        val details = "${value.summary}${value.details?.let { ": $it" }.orEmpty()}"
+                        if (keepGraphVisible) graphSummary.text = message("status.refresh.failed", details)
+                        else showStatus(details, true)
+                    }
+                    else -> if (keepGraphVisible) cache[root]?.first?.let(::updateGraphSummary)
+                        else showStatus(message("status.loading.cancelled"), true)
                 }
             }
         })
     }
 
     private fun publish(snapshot: GraphSnapshot, layout: GraphLayout) {
-        canvas.show(snapshot, layout); (cards.layout as CardLayout).show(cards, "graph")
+        val root = currentRoot
+        val focusHead = shouldFocusHead(publishedRoot, publishedHead, root, snapshot.head)
+        publishedRoot = root
+        publishedHead = snapshot.head
+        canvas.show(snapshot, layout, snapshot.head.hash?.takeIf { focusHead })
+        (cards.layout as CardLayout).show(cards, "graph")
+        updateGraphSummary(snapshot)
+    }
+
+    private fun updateGraphSummary(snapshot: GraphSnapshot) {
         graphSummary.text = message(
             "status.graph.summary",
             snapshot.commits.size,
@@ -413,6 +432,13 @@ internal fun parseZoomPercent(value: Any?): Double? = value?.toString()
     ?.replace(',', '.')
     ?.toDoubleOrNull()
     ?.takeIf { it.isFinite() && it > 0.0 }
+
+internal fun shouldFocusHead(
+    previousRoot: Path?,
+    previousHead: HeadState?,
+    currentRoot: Path?,
+    currentHead: HeadState,
+): Boolean = currentHead.hash != null && (previousRoot != currentRoot || previousHead != currentHead)
 
 internal class RevisionCompareService(private val project: Project) {
     private val repositoryManager = GitRepositoryManager.getInstance(project)

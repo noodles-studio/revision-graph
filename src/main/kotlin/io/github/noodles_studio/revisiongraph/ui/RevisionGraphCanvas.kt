@@ -34,6 +34,7 @@ class RevisionGraphCanvas : JComponent() {
     private var scale = 1.0
     private var offsetX = 28.0
     private var offsetY = 22.0
+    private var pendingFocusHash: String? = null
     private var selection = RevisionSelection.EMPTY
     private val compareRevisionsByHash = mutableMapOf<String, CompareRevision>()
     private var dragStart: Point? = null
@@ -60,6 +61,7 @@ class RevisionGraphCanvas : JComponent() {
                     return
                 }
                 if (SwingUtilities.isLeftMouseButton(e) || SwingUtilities.isMiddleMouseButton(e)) {
+                    pendingFocusHash = null
                     pressedButton = e.button
                     dragStart = e.point; dragged = false; cursor = Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
                 }
@@ -92,12 +94,19 @@ class RevisionGraphCanvas : JComponent() {
         addMouseListener(mouse); addMouseMotionListener(mouse)
     }
 
-    fun show(snapshot: GraphSnapshot, layout: GraphLayout) {
+    fun show(snapshot: GraphSnapshot, layout: GraphLayout, focusHash: String? = null) {
         val firstGraph = this.layout == null
         this.snapshot = snapshot; this.layout = layout
         selection = selection.retain(layout.byHash.keys)
         retainCompareRevisions()
-        if (firstGraph) resetView() else repaint()
+        when {
+            focusHash != null && focusHash in layout.byHash -> {
+                pendingFocusHash = focusHash
+                repaint()
+            }
+            firstGraph -> resetView()
+            else -> repaint()
+        }
     }
 
     fun clearSelection() = updateSelection(RevisionSelection.EMPTY)
@@ -105,11 +114,12 @@ class RevisionGraphCanvas : JComponent() {
     fun zoomOut() = zoomAt(.84, Point(width / 2, height / 2))
     fun zoomPercent() = (scale * 100.0).roundToInt()
     fun setZoomPercent(percent: Double) = zoomAt(percent.coerceIn(12.0, 350.0) / 100.0 / scale, Point(width / 2, height / 2))
-    fun resetView() { scale = 1.0; offsetX = 28.0; offsetY = 22.0; zoomChanged(); repaint() }
+    fun resetView() { pendingFocusHash = null; scale = 1.0; offsetX = 28.0; offsetY = 22.0; zoomChanged(); repaint() }
 
     fun fitToView() {
         val graph = layout ?: return
         if (width < 50 || height < 50) return
+        pendingFocusHash = null
         scale = min(1.0, min((width - 56.0) / graph.bounds.width, (height - 48.0) / graph.bounds.height)).coerceAtLeast(.12)
         offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0); offsetY = 24.0
         zoomChanged(); repaint()
@@ -118,6 +128,7 @@ class RevisionGraphCanvas : JComponent() {
     fun fitWidth() {
         val graph = layout ?: return
         if (width < 50) return
+        pendingFocusHash = null
         scale = min(1.0, (width - 56.0) / graph.bounds.width).coerceAtLeast(.12)
         offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0)
         offsetY = 24.0
@@ -127,6 +138,7 @@ class RevisionGraphCanvas : JComponent() {
     fun fitHeight() {
         val graph = layout ?: return
         if (height < 50) return
+        pendingFocusHash = null
         scale = min(1.0, (height - 48.0) / graph.bounds.height).coerceAtLeast(.12)
         offsetX = 28.0
         offsetY = max(24.0, (height - graph.bounds.height * scale) / 2.0)
@@ -134,6 +146,7 @@ class RevisionGraphCanvas : JComponent() {
     }
 
     private fun zoomAt(factor: Double, point: Point) {
+        pendingFocusHash = null
         val old = scale; scale = (scale * factor).coerceIn(.12, 3.5)
         offsetX = point.x - (point.x - offsetX) * scale / old
         offsetY = point.y - (point.y - offsetY) * scale / old
@@ -146,6 +159,7 @@ class RevisionGraphCanvas : JComponent() {
         super.paintComponent(g)
         val graph = layout ?: return
         val model = snapshot ?: return
+        applyPendingFocus(graph)
         val g2 = (g.create() as Graphics2D).apply {
             setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
@@ -157,6 +171,15 @@ class RevisionGraphCanvas : JComponent() {
         if (selection.baseHash != null) drawEdges(g2, graph, visible, highlighted, true)
         graph.index.query(expand(visible, 8.0, 8.0)).forEach { drawNode(g2, model, it) }
         g2.dispose()
+    }
+
+    private fun applyPendingFocus(graph: GraphLayout) {
+        val hash = pendingFocusHash ?: return
+        val node = graph.byHash[hash] ?: run { pendingFocusHash = null; return }
+        if (width < 50 || height < 50) return
+        offsetX = width / 2.0 - node.bounds.centerX * scale
+        offsetY = height / 2.0 - node.bounds.centerY * scale
+        pendingFocusHash = null
     }
 
     private fun drawEdges(g: Graphics2D, graph: GraphLayout, visible: Rectangle2D, highlighted: Set<Pair<String, String>>, highlightPass: Boolean) {

@@ -5,6 +5,7 @@ import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import io.github.noodles_studio.revisiongraph.model.HeadState
 import io.github.noodles_studio.revisiongraph.model.RefKind
 import io.github.noodles_studio.revisiongraph.model.RevisionRef
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -138,6 +139,21 @@ class RevisionSelectionTest {
         assertTrue(checkoutAvailable(RevisionRef("refs/remotes/origin/test", "a", RefKind.REMOTE_BRANCH), head))
         assertTrue(checkoutAvailable(RevisionRef("refs/tags/v1.0", "a", RefKind.TAG), head))
         assertFalse(checkoutAvailable(RevisionRef("refs/stash", "a", RefKind.STASH), head))
+    }
+
+    @Test fun `head focus happens for first view root changes and head changes only`() {
+        val rootA = Path.of("/repo-a")
+        val rootB = Path.of("/repo-b")
+        val test = HeadState("a", "test", false)
+        val otherAtSameCommit = HeadState("a", "other", false)
+        val advanced = HeadState("b", "test", false)
+
+        assertTrue(shouldFocusHead(null, null, rootA, test))
+        assertFalse(shouldFocusHead(rootA, test, rootA, test))
+        assertTrue(shouldFocusHead(rootA, test, rootB, test))
+        assertTrue(shouldFocusHead(rootA, test, rootA, otherAtSameCommit))
+        assertTrue(shouldFocusHead(rootA, test, rootA, advanced))
+        assertFalse(shouldFocusHead(rootA, test, rootA, HeadState(null, null, false)))
     }
 
     private fun snapshot(head: HeadState, vararg refs: RevisionRef) = GraphSnapshot(
