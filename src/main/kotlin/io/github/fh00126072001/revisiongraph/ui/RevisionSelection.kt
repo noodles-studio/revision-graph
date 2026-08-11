@@ -45,7 +45,20 @@ internal data class CompareRevision(val hash: String, val revision: String) {
 internal data class RevisionCompareSelection(
     val base: CompareRevision,
     val target: CompareRevision? = null,
+    val active: CompareRevision = target ?: base,
 )
+
+internal sealed interface RevisionLogTarget {
+    data class Reference(val name: String) : RevisionLogTarget
+    data class Commit(val hash: String) : RevisionLogTarget
+}
+
+internal fun revisionLogTarget(selected: CompareRevision, resolvedRevisionHash: String?): RevisionLogTarget =
+    if (selected.revision != selected.hash && resolvedRevisionHash.equals(selected.hash, ignoreCase = true)) {
+        RevisionLogTarget.Reference(selected.revision)
+    } else {
+        RevisionLogTarget.Commit(selected.hash)
+    }
 
 internal fun preferredCompareRevision(snapshot: GraphSnapshot, hash: String): CompareRevision {
     val revision = snapshot.refsByCommit[hash].orEmpty()

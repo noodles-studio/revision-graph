@@ -1,6 +1,5 @@
 package io.github.fh00126072001.revisiongraph.git
 
-import io.github.fh00126072001.revisiongraph.model.ChangeKind
 import io.github.fh00126072001.revisiongraph.model.RefKind
 import java.io.ByteArrayInputStream
 import kotlin.test.*
@@ -46,11 +45,5 @@ class GitParsersTest {
         val refs = GitParsers.refs(ByteArrayInputStream(input.toByteArray()))
         assertEquals(listOf(RefKind.STASH, RefKind.BISECT_GOOD, RefKind.BISECT_BAD, RefKind.BISECT_SKIP, RefKind.NOTES), refs.map { it.kind })
         assertEquals(listOf("stash", "good", "bad", "skip", "commits"), refs.map { it.displayName })
-    }
-
-    @Test fun `name status parses rename and deletion`() {
-        val changes = GitParsers.nameStatus(ByteArrayInputStream(bytes("R100", "old name", "新 name", "D", "gone")))
-        assertEquals(ChangeKind.RENAMED, changes[0].kind); assertEquals("新 name", changes[0].newPath)
-        assertEquals(ChangeKind.DELETED, changes[1].kind); assertNull(changes[1].newPath)
     }
 }

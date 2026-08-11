@@ -1,8 +1,5 @@
 package io.github.fh00126072001.revisiongraph.ui
 
-import com.intellij.diff.DiffContentFactory
-import com.intellij.diff.DiffManager
-import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
@@ -19,12 +16,16 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.ProjectLevelVcsManager
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.openapi.wm.ToolWindowId
 import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.ui.JBSplitter
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.*
-import com.intellij.ui.table.JBTable
+import com.intellij.ui.content.Content
 import com.intellij.util.Alarm
+import com.intellij.vcs.log.Hash
+import com.intellij.vcs.log.VcsLogFilterCollection
+import com.intellij.vcs.log.impl.VcsProjectLog
+import com.intellij.vcs.log.ui.MainVcsLogUi
+import com.intellij.vcs.log.visible.filters.VcsLogFilterObject
 import git4idea.branch.GitBrancher
 import git4idea.commands.Git
 import git4idea.repo.GitRepository
@@ -36,20 +37,13 @@ import io.github.fh00126072001.revisiongraph.layout.LayeredDagLayoutEngine
 import io.github.fh00126072001.revisiongraph.model.*
 import java.awt.BorderLayout
 import java.awt.CardLayout
-import java.awt.Color
 import java.awt.FlowLayout
 import java.awt.Point
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
+import java.lang.ref.WeakReference
 import java.nio.file.Path
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.*
 import javax.swing.border.EmptyBorder
-import javax.swing.table.AbstractTableModel
-import javax.swing.table.DefaultTableCellRenderer
 
 class RevisionGraphToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -70,8 +64,8 @@ class OpenRevisionGraphAction : DumbAwareAction() {
 private class RevisionGraphView(private val project: Project) : Disposable {
     private val git = GitClient(project)
     private val comparisons = RevisionCompareService(project)
+    private val logs = RevisionLogService(project)
     private val generation = AtomicLong()
-    private val detailGeneration = AtomicLong()
     private val cache = mutableMapOf<Path, Pair<GraphSnapshot, GraphLayout>>()
     private var roots = emptyList<Path>()
     private val rootBox = ComboBox<Path>()
@@ -81,12 +75,10 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private val status = JBLabel("Loading…", SwingConstants.CENTER)
     private val retry = JButton("Retry")
     private val canvas = RevisionGraphCanvas()
-    private val details = DetailsPanel(::openDiff)
     private val cards = JPanel(CardLayout())
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var currentRoot: Path? = null
     private var graphIndicator: ProgressIndicator? = null
-    private var detailIndicator: ProgressIndicator? = null
     private var updatingRoots = false
 
     val component: JComponent
@@ -111,11 +103,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         }
         cards.add(canvas, "graph")
         cards.add(JPanel(BorderLayout()).apply { add(status, BorderLayout.CENTER); add(JPanel().apply { add(retry) }, BorderLayout.SOUTH) }, "status")
-        val split = JBSplitter(true, .72f).apply {
-            firstComponent = cards; secondComponent = details.component
-            dividerWidth = 2
-        }
-        component = JPanel(BorderLayout()).apply { add(toolbar, BorderLayout.NORTH); add(split, BorderLayout.CENTER) }
+        component = JPanel(BorderLayout()).apply { add(toolbar, BorderLayout.NORTH); add(cards, BorderLayout.CENTER) }
         rootBox.renderer = object : DefaultListCellRenderer() {
             override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean) =
                 super.getListCellRendererComponent(list, (value as? Path)?.toString() ?: value, index, isSelected, cellHasFocus)
@@ -131,8 +119,8 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         }
         refresh.addActionListener { refreshRoots(); load(true) }
         retry.addActionListener { refreshRoots(); load(true) }
-        canvas.onSelection = { hash -> if (hash == null) clearDetails() else loadDetails(hash) }
         canvas.onContextMenu = ::showContextMenu
+        canvas.onRevisionSelected = ::showSharedLog
         canvas.onZoomChanged = { zoomLabel.text = "$it%" }
         project.messageBus.connect(this).subscribe(GitRepository.GIT_REPO_CHANGE, GitRepositoryChangeListener { repository ->
             if (repository.root.toNioPath() == currentRoot) {
@@ -168,7 +156,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private fun load(force: Boolean) {
         if (currentRoot == null) refreshRoots()
         val root = currentRoot ?: return showStatus("No Git root selected. Refresh after IDEA finishes Git initialization.", true)
-        val id = generation.incrementAndGet(); graphIndicator?.cancel(); detailIndicator?.cancel()
+        val id = generation.incrementAndGet(); graphIndicator?.cancel()
         if (!force) cache[root]?.let { (snapshot, layout) -> publish(snapshot, layout); return }
         showStatus("Loading revision graph…", false)
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Loading Revision Graph", true) {
@@ -196,7 +184,6 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private fun publish(snapshot: GraphSnapshot, layout: GraphLayout) {
         canvas.show(snapshot, layout); (cards.layout as CardLayout).show(cards, "graph")
         graphSummary.text = "${snapshot.commits.size} commits  ·  ${snapshot.refsByCommit.values.sumOf { it.size }} refs"
-        canvas.activeHash()?.let(::loadDetails) ?: clearDetails()
     }
 
     private fun showStatus(text: String, canRetry: Boolean) {
@@ -204,32 +191,14 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         (cards.layout as CardLayout).show(cards, "status")
     }
 
-    private fun loadDetails(hash: String) {
-        val root = currentRoot ?: return
-        val id = detailGeneration.incrementAndGet(); detailIndicator?.cancel(); details.loading(hash)
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Loading Commit Details", true) {
-            private var value: CommitDetails? = null; private var failure: String? = null
-            override fun run(indicator: ProgressIndicator) {
-                detailIndicator = indicator
-                try { value = git.loadDetails(root, hash, indicator) } catch (e: Exception) { failure = e.message }
-            }
-            override fun onFinished() {
-                if (detailGeneration.get() != id || project.isDisposed) return
-                value?.let(details::show) ?: details.error(failure ?: "Details loading cancelled")
-            }
-        })
-    }
-
-    private fun clearDetails() {
-        detailGeneration.incrementAndGet()
-        detailIndicator?.cancel()
-        details.clear()
-    }
-
     private fun showContextMenu(selection: RevisionCompareSelection, point: Point) {
         val base = selection.base
         val group = DefaultActionGroup()
         val target = selection.target
+        group.add(object : DumbAwareAction("查看 ${selection.active.displayName} 的提交记录") {
+            override fun actionPerformed(e: AnActionEvent) = showLog(selection.active)
+        })
+        group.addSeparator()
         if (target == null) {
             group.add(object : DumbAwareAction("${base.displayName} 与当前工作区比较差异") {
                 override fun actionPerformed(e: AnActionEvent) = compareWithWorkspace(base)
@@ -242,40 +211,31 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         ActionManager.getInstance().createActionPopupMenu(ActionPlaces.POPUP, group).component.show(canvas, point.x, point.y)
     }
 
+    private fun showLog(revision: CompareRevision) {
+        val root = currentRoot
+        if (root == null || !logs.show(root, revision)) showRepositoryUnavailable()
+    }
+
+    private fun showSharedLog(revision: CompareRevision) {
+        val root = currentRoot
+        if (root == null || !logs.showShared(root, revision)) showRepositoryUnavailable()
+    }
+
     private fun compareWithWorkspace(revision: CompareRevision) {
         val root = currentRoot
-        if (root == null || !comparisons.compareWithWorkspace(root, revision)) showComparisonUnavailable()
+        if (root == null || !comparisons.compareWithWorkspace(root, revision)) showRepositoryUnavailable()
     }
 
     private fun compareRevisions(base: CompareRevision, target: CompareRevision) {
         val root = currentRoot
-        if (root == null || !comparisons.compareRevisions(root, base, target)) showComparisonUnavailable()
+        if (root == null || !comparisons.compareRevisions(root, base, target)) showRepositoryUnavailable()
     }
 
-    private fun showComparisonUnavailable() {
+    private fun showRepositoryUnavailable() {
         Messages.showWarningDialog(project, "The selected Git repository is no longer available. Refresh the revision graph and try again.", "Revision Graph")
     }
 
-    private fun openDiff(change: FileChange, details: CommitDetails) {
-        val root = currentRoot ?: return
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Loading Diff", true) {
-            private var old: ByteArray? = null; private var new: ByteArray? = null
-            override fun run(indicator: ProgressIndicator) {
-                old = git.readBlob(root, details.parents.firstOrNull(), change.oldPath, indicator)
-                new = git.readBlob(root, details.hash, change.newPath, indicator)
-            }
-            override fun onSuccess() {
-                if (old?.any { it == 0.toByte() } == true || new?.any { it == 0.toByte() } == true) return this@RevisionGraphView.details.error("Binary content is not supported by the MVP text diff")
-                val factory = DiffContentFactory.getInstance()
-                val request = SimpleDiffRequest(change.newPath ?: change.oldPath ?: "Revision Graph Diff",
-                    factory.create(project, old?.toString(Charsets.UTF_8).orEmpty()), factory.create(project, new?.toString(Charsets.UTF_8).orEmpty()),
-                    "${details.parents.firstOrNull()?.take(8) ?: "Empty tree"}: ${change.oldPath.orEmpty()}", "${details.hash.take(8)}: ${change.newPath.orEmpty()}")
-                DiffManager.getInstance().showDiff(project, request)
-            }
-        })
-    }
-
-    override fun dispose() { generation.incrementAndGet(); detailGeneration.incrementAndGet(); graphIndicator?.cancel(); detailIndicator?.cancel(); cache.clear() }
+    override fun dispose() { generation.incrementAndGet(); graphIndicator?.cancel(); cache.clear() }
     private fun toolbarButton(text: String, tooltip: String, action: () -> Unit) = JButton(text).apply {
         toolTipText = tooltip; isFocusable = false; margin = java.awt.Insets(2, 9, 2, 9); addActionListener { action() }
     }
@@ -332,101 +292,160 @@ internal class RevisionCompareService(private val project: Project) {
     }
 }
 
-private class DetailsPanel(private val diff: (FileChange, CommitDetails) -> Unit) {
-    private val title = JBLabel("Select a commit").apply { font = font.deriveFont(java.awt.Font.BOLD, 15f) }
-    private val identity = JBLabel("Click a commit in the graph to inspect it")
-    private val hash = JBLabel()
-    private val parents = JBLabel()
-    private val message = JBTextArea().apply {
-        isEditable = false; lineWrap = true; wrapStyleWord = true; isOpaque = false
-        border = EmptyBorder(8, 2, 8, 8)
-    }
-    private val model = ChangeTableModel()
-    private val table = JBTable(model).apply {
-        setShowGrid(false); intercellSpacing = java.awt.Dimension(0, 0); rowHeight = 26
-        tableHeader.reorderingAllowed = false
-        columnModel.getColumn(0).preferredWidth = 92; columnModel.getColumn(0).maxWidth = 110
-        columnModel.getColumn(0).cellRenderer = ChangeStatusRenderer()
-        columnModel.getColumn(1).cellRenderer = PathRenderer()
-        emptyText.text = "No changed files"
-    }
-    private var current: CommitDetails? = null
-    private val tabs = JBTabbedPane().apply {
-        addTab("Details", JPanel(BorderLayout()).apply {
-            border = EmptyBorder(10, 12, 8, 12)
-            add(JPanel().apply {
-                layout = BoxLayout(this, BoxLayout.Y_AXIS); isOpaque = false
-                add(title); add(Box.createVerticalStrut(4)); add(identity); add(Box.createVerticalStrut(5)); add(hash); add(parents)
-            }, BorderLayout.NORTH)
-            add(JBScrollPane(message).apply { border = null }, BorderLayout.CENTER)
+internal class RevisionLogService(private val project: Project) {
+    private val repositoryManager = GitRepositoryManager.getInstance(project)
+    private val openedTabs = mutableMapOf<LogTabKey, WeakReference<Content>>()
+    private val openingTabs = mutableSetOf<LogTabKey>()
+    private val sharedGeneration = AtomicLong()
+    private var sharedTab: SharedLogTab? = null
+
+    fun show(root: Path, selected: CompareRevision): Boolean {
+        val repository = findRepository(root) ?: return false
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Preparing Git Log", true) {
+            private var commit: Hash? = null
+            private var target: RevisionLogTarget = RevisionLogTarget.Commit(selected.hash)
+
+            override fun run(indicator: ProgressIndicator) {
+                indicator.checkCanceled()
+                commit = runCatching { Git.getInstance().resolveReference(repository, selected.hash) }.getOrNull()
+                if (selected.revision != selected.hash) {
+                    indicator.checkCanceled()
+                    val namedHash = runCatching {
+                        Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
+                    }.getOrNull()
+                    target = revisionLogTarget(selected, namedHash)
+                }
+            }
+
+            override fun onSuccess() {
+                if (project.isDisposed) return
+                if (!VcsProjectLog.isAvailable(project)) return showLogUnavailable()
+                if (target is RevisionLogTarget.Reference) {
+                    val reference = (target as RevisionLogTarget.Reference).name
+                    val filters = VcsLogFilterObject.collection(
+                        VcsLogFilterObject.fromRoot(repository.root),
+                        VcsLogFilterObject.fromBranch(reference),
+                    )
+                    openOrActivateLogTab(repository, reference, filters)
+                } else {
+                    commit?.let { VcsProjectLog.showRevisionInMainLog(project, repository.root, it) }
+                        ?: showLogUnavailable()
+                }
+            }
         })
-        addTab("Changes", JBScrollPane(table))
+        return true
     }
-    val component = JPanel(BorderLayout()).apply {
-        minimumSize = java.awt.Dimension(200, 130)
-        add(tabs, BorderLayout.CENTER)
-    }
-    init { table.addMouseListener(object : MouseAdapter() { override fun mouseClicked(e: MouseEvent) {
-        if (e.clickCount == 2) model.changeAt(table.rowAtPoint(e.point))?.let { change -> current?.let { diff(change, it) } }
-    } }) }
-    fun loading(hash: String) {
-        title.text = "Loading commit…"; identity.text = hash.take(12); this.hash.text = ""; parents.text = ""; message.text = ""; model.set(emptyList())
-    }
-    fun clear() {
-        current = null
-        title.text = "Select a commit"
-        identity.text = "Click a commit in the graph to inspect it"
-        hash.text = ""
-        parents.text = ""
-        message.text = ""
-        model.set(emptyList())
-        tabs.setTitleAt(1, "Changes")
-    }
-    fun error(message: String) { title.text = "Unable to load commit"; identity.text = message; this.message.text = "" }
-    fun show(value: CommitDetails) {
-        current = value
-        val date = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format(Instant.ofEpochSecond(value.epochSeconds).atZone(ZoneId.systemDefault()))
-        title.text = value.subject
-        identity.text = "${value.author} <${value.email}>  ·  $date"
-        hash.text = "Commit  ${value.hash}"
-        parents.text = "Parents  ${value.parents.joinToString("  ") { it.take(12) }.ifBlank { "Empty tree" }}"
-        message.text = value.message.trim(); message.caretPosition = 0
-        model.set(value.changes)
-        tabs.setTitleAt(1, "Changes (${value.changes.size})")
-    }
-}
 
-private class ChangeTableModel : AbstractTableModel() {
-    private var changes = emptyList<FileChange>()
-    fun set(value: List<FileChange>) { changes = value; fireTableDataChanged() }
-    fun changeAt(row: Int) = changes.getOrNull(row)
-    override fun getRowCount() = changes.size
-    override fun getColumnCount() = 2
-    override fun getColumnName(column: Int) = if (column == 0) "Status" else "Path — double-click to open diff"
-    override fun getValueAt(row: Int, column: Int): Any = if (column == 0) changes[row].kind else changes[row].newPath ?: changes[row].oldPath.orEmpty()
-}
+    fun showShared(root: Path, selected: CompareRevision): Boolean {
+        val repository = findRepository(root) ?: return false
+        val requestId = sharedGeneration.incrementAndGet()
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Preparing Git Log", true) {
+            private var commitExists = false
+            private var target: RevisionLogTarget = RevisionLogTarget.Commit(selected.hash)
 
-private class ChangeStatusRenderer : DefaultTableCellRenderer() {
-    override fun getTableCellRendererComponent(table: JTable, value: Any?, selected: Boolean, focus: Boolean, row: Int, column: Int): java.awt.Component {
-        super.getTableCellRendererComponent(table, value, selected, focus, row, column)
-        val kind = value as? ChangeKind ?: ChangeKind.UNKNOWN
-        text = when (kind) {
-            ChangeKind.ADDED -> "+  Added"; ChangeKind.MODIFIED -> "●  Modified"; ChangeKind.DELETED -> "−  Deleted"
-            ChangeKind.RENAMED -> "→  Renamed"; ChangeKind.COPIED -> "⧉  Copied"; ChangeKind.TYPE_CHANGED -> "◆  Type"; ChangeKind.UNKNOWN -> "?  Unknown"
+            override fun run(indicator: ProgressIndicator) {
+                indicator.checkCanceled()
+                commitExists = runCatching { Git.getInstance().resolveReference(repository, selected.hash) }.getOrNull() != null
+                if (selected.revision != selected.hash) {
+                    indicator.checkCanceled()
+                    val namedHash = runCatching {
+                        Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
+                    }.getOrNull()
+                    target = revisionLogTarget(selected, namedHash)
+                }
+            }
+
+            override fun onSuccess() {
+                if (project.isDisposed || sharedGeneration.get() != requestId) return
+                if (!VcsProjectLog.isAvailable(project) || !commitExists) return showLogUnavailable()
+                openOrUpdateSharedLogTab(filters(repository, target), requestId)
+            }
+        })
+        return true
+    }
+
+    private fun filters(repository: GitRepository, target: RevisionLogTarget): VcsLogFilterCollection =
+        VcsLogFilterObject.collection(
+            VcsLogFilterObject.fromRoot(repository.root),
+            when (target) {
+                is RevisionLogTarget.Reference -> VcsLogFilterObject.fromBranch(target.name)
+                is RevisionLogTarget.Commit -> VcsLogFilterObject.fromHash(target.hash)
+            },
+        )
+
+    private fun openOrUpdateSharedLogTab(filters: VcsLogFilterCollection, requestId: Long) {
+        VcsProjectLog.runInMainLog(project) {
+            if (project.isDisposed || sharedGeneration.get() != requestId) return@runInMainLog
+            val existing = sharedTab
+            val existingUi = existing?.ui?.get()
+            val existingContent = existing?.content?.get()
+            if (existingUi != null && isUsable(existingContent)) {
+                existingUi.filterUi.setFilters(filters)
+                activate(existingContent)
+                return@runInMainLog
+            }
+
+            sharedTab = null
+            val ui = VcsProjectLog.getInstance(project).openLogTab(filters) ?: return@runInMainLog
+            val content = findContent(ui.mainComponent) ?: return@runInMainLog
+            sharedTab = SharedLogTab(WeakReference(ui), WeakReference(content))
         }
-        if (!selected) foreground = when (kind) {
-            ChangeKind.ADDED -> JBColor(Color(0x2E7D32), Color(0x70C784)); ChangeKind.DELETED -> JBColor(Color(0xB33434), Color(0xE06C75))
-            ChangeKind.RENAMED, ChangeKind.COPIED -> JBColor(Color(0x7B5AA6), Color(0xC39BE8)); else -> JBColor.foreground()
-        }
-        border = EmptyBorder(0, 10, 0, 4)
-        return this
     }
-}
 
-private class PathRenderer : DefaultTableCellRenderer() {
-    override fun getTableCellRendererComponent(table: JTable, value: Any?, selected: Boolean, focus: Boolean, row: Int, column: Int): java.awt.Component {
-        super.getTableCellRendererComponent(table, value, selected, focus, row, column)
-        border = EmptyBorder(0, 8, 0, 8); toolTipText = value?.toString()
-        return this
+    private fun openOrActivateLogTab(
+        repository: GitRepository,
+        reference: String,
+        filters: VcsLogFilterCollection,
+    ) {
+        val key = LogTabKey(repository.root.path, reference)
+        if (activate(openedTabs[key]?.get())) return
+        openedTabs.remove(key)
+        if (!openingTabs.add(key)) return
+
+        VcsProjectLog.runInMainLog(project) {
+            try {
+                if (activate(openedTabs[key]?.get())) return@runInMainLog
+                val ui = VcsProjectLog.getInstance(project).openLogTab(filters) ?: return@runInMainLog
+                findContent(ui.mainComponent)?.let { openedTabs[key] = WeakReference(it) }
+            } finally {
+                openingTabs.remove(key)
+            }
+        }
     }
+
+    private fun activate(content: Content?): Boolean {
+        if (!isUsable(content)) return false
+        val manager = content!!.manager ?: return false
+        manager.setSelectedContent(content, true)
+        ToolWindowManager.getInstance(project).getToolWindow(ToolWindowId.VCS)?.activate(null, true)
+        return true
+    }
+
+    private fun isUsable(content: Content?): Boolean {
+        if (content == null || !content.isValid) return false
+        val manager = content.manager ?: return false
+        return !manager.isDisposed
+    }
+
+    private fun findContent(component: JComponent): Content? {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ToolWindowId.VCS) ?: return null
+        return toolWindow.contentManager.contents.firstOrNull { content ->
+            content.component === component || SwingUtilities.isDescendingFrom(component, content.component)
+        }
+    }
+
+    private fun showLogUnavailable() {
+        Messages.showWarningDialog(project, "IDEA's Git Log is not available for the selected revision.", "Revision Graph")
+    }
+
+    private fun findRepository(root: Path): GitRepository? {
+        val expected = root.toAbsolutePath().normalize()
+        return repositoryManager.repositories.firstOrNull { it.root.toNioPath().toAbsolutePath().normalize() == expected }
+    }
+
+    private data class LogTabKey(val root: String, val reference: String)
+    private data class SharedLogTab(
+        val ui: WeakReference<MainVcsLogUi>,
+        val content: WeakReference<Content>,
+    )
 }

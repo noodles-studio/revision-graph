@@ -9,8 +9,6 @@ import java.nio.file.Path
 import java.util.concurrent.Executors
 
 class GitClient(private val project: Project) {
-    private val emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-
     fun loadGraph(root: Path, indicator: ProgressIndicator): LoadResult<GraphSnapshot> = try {
         val historyBytes = run(root, indicator, "log", "--all", "--parents", "--simplify-by-decoration",
             "--topo-order", "--format=%H%x00%P%x00%at%x00%an%x00%ae%x00%s%x00%b", "-z")
@@ -33,23 +31,6 @@ class GitClient(private val project: Project) {
         LoadResult.Failure("Git command failed", e.message)
     } catch (e: Exception) {
         LoadResult.Failure("Unable to parse repository history", e.message)
-    }
-
-    fun loadDetails(root: Path, hash: String, indicator: ProgressIndicator): CommitDetails {
-        val bytes = run(root, indicator, "show", "-s", "-z", "--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s%x00%B", hash)
-        var fields: List<String>? = null
-        NulRecordParser(7).parse(ByteArrayInputStream(bytes)) { fields = it }
-        val data = requireNotNull(fields) { "No commit details returned" }
-        val parents = data[1].split(' ').filter(String::isNotBlank)
-        val base = parents.firstOrNull() ?: emptyTree
-        val changes = GitParsers.nameStatus(ByteArrayInputStream(run(root, indicator,
-            "diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "-z", base, hash)))
-        return CommitDetails(data[0], parents, data[2], data[3], data[4].toLong(), data[5], data[6], changes)
-    }
-
-    fun readBlob(root: Path, revision: String?, path: String?, indicator: ProgressIndicator): ByteArray? {
-        if (revision == null || path == null) return null
-        return try { run(root, indicator, "show", "$revision:$path") } catch (_: GitCommandException) { null }
     }
 
     private fun runText(root: Path, indicator: ProgressIndicator, allowFailure: Boolean, vararg args: String): String? =

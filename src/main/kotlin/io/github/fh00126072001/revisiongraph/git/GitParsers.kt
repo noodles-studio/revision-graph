@@ -34,26 +34,4 @@ object GitParsers {
         else -> RefKind.OTHER
     }
 
-    fun nameStatus(input: InputStream): List<FileChange> {
-        val fields = mutableListOf<String>()
-        NulRecordParser(1).parse(input) { fields += it.single() }
-        val changes = mutableListOf<FileChange>()
-        var index = 0
-        while (index < fields.size) {
-            val status = fields[index++]
-            if (status.isBlank()) continue
-            val code = status.first()
-            val first = fields.getOrNull(index++) ?: error("Missing path after $status")
-            if (code == 'R' || code == 'C') {
-                val second = fields.getOrNull(index++) ?: error("Missing destination after $status")
-                changes += FileChange(if (code == 'R') ChangeKind.RENAMED else ChangeKind.COPIED, first, second)
-            } else changes += FileChange(kind(code), if (code == 'A') null else first, if (code == 'D') null else first)
-        }
-        return changes
-    }
-
-    private fun kind(code: Char) = when (code) {
-        'A' -> ChangeKind.ADDED; 'M' -> ChangeKind.MODIFIED; 'D' -> ChangeKind.DELETED
-        'T' -> ChangeKind.TYPE_CHANGED; else -> ChangeKind.UNKNOWN
-    }
 }

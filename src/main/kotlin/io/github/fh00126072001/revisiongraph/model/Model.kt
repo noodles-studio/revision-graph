@@ -36,25 +36,6 @@ data class GraphSnapshot(
     val commitsByHash = commits.associateBy { it.hash }
 }
 
-enum class ChangeKind { ADDED, MODIFIED, DELETED, RENAMED, COPIED, TYPE_CHANGED, UNKNOWN }
-
-data class FileChange(
-    val kind: ChangeKind,
-    val oldPath: String?,
-    val newPath: String?,
-)
-
-data class CommitDetails(
-    val hash: String,
-    val parents: List<String>,
-    val author: String,
-    val email: String,
-    val epochSeconds: Long,
-    val subject: String,
-    val message: String,
-    val changes: List<FileChange>,
-)
-
 sealed interface LoadResult<out T> {
     data class Success<T>(val value: T) : LoadResult<T>
     data class Empty(val reason: String) : LoadResult<Nothing>

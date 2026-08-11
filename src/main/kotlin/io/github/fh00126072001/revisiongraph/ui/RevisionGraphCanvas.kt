@@ -23,8 +23,8 @@ import kotlin.math.min
 
 /** RevisionGraph-style block topology with IDEA-aware colors and interaction. */
 class RevisionGraphCanvas : JComponent() {
-    var onSelection: ((String?) -> Unit)? = null
     internal var onContextMenu: ((RevisionCompareSelection, Point) -> Unit)? = null
+    internal var onRevisionSelected: ((CompareRevision) -> Unit)? = null
     var onZoomChanged: ((Int) -> Unit)? = null
     private var snapshot: GraphSnapshot? = null
     private var layout: GraphLayout? = null
@@ -79,6 +79,7 @@ class RevisionGraphCanvas : JComponent() {
                 if (!dragged && pressedButton == MouseEvent.BUTTON1) {
                     val target = hitTarget(e.point)
                     updateSelection(selection.click(target?.hash, e.isControlDown || e.isMetaDown), target)
+                    target?.let(::notifyRevisionSelected)
                 }
                 pressedButton = MouseEvent.NOBUTTON
                 popupHandledOnPress = false
@@ -96,7 +97,6 @@ class RevisionGraphCanvas : JComponent() {
         if (firstGraph) resetView() else repaint()
     }
 
-    fun activeHash() = selection.activeHash
     fun clearSelection() = updateSelection(RevisionSelection.EMPTY)
     fun zoomIn() = zoomAt(1.18, Point(width / 2, height / 2))
     fun zoomOut() = zoomAt(.84, Point(width / 2, height / 2))
@@ -358,7 +358,6 @@ class RevisionGraphCanvas : JComponent() {
         }
         retainCompareRevisions()
         if (changed || clicked != null) repaint()
-        if (changed) onSelection?.invoke(value.activeHash)
     }
 
     private fun retainCompareRevisions() {
@@ -375,15 +374,25 @@ class RevisionGraphCanvas : JComponent() {
         }
     }
 
+    private fun notifyRevisionSelected(target: HitTarget) {
+        if (target.hash != selection.baseHash && target.hash != selection.targetHash) return
+        val model = snapshot ?: return
+        val revision = compareRevisionsByHash[target.hash] ?: preferredCompareRevision(model, target.hash)
+        onRevisionSelected?.invoke(revision)
+    }
+
     private fun showContextMenu(event: MouseEvent) {
         val target = hitTarget(event.point) ?: return
         updateSelection(selection.contextClick(target.hash), target)
         val baseHash = selection.baseHash ?: return
         val model = snapshot ?: return
         val base = compareRevisionsByHash[baseHash] ?: preferredCompareRevision(model, baseHash)
-        val compareSelection = RevisionCompareSelection(base, selection.targetHash?.let { hash ->
+        val selectedTarget = selection.targetHash?.let { hash ->
             compareRevisionsByHash[hash] ?: preferredCompareRevision(model, hash)
-        })
+        }
+        val activeHash = selection.activeHash ?: baseHash
+        val active = compareRevisionsByHash[activeHash] ?: preferredCompareRevision(model, activeHash)
+        val compareSelection = RevisionCompareSelection(base, selectedTarget, active)
         onContextMenu?.invoke(compareSelection, event.point)
     }
 

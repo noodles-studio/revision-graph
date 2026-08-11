@@ -94,6 +94,15 @@ class RevisionSelectionTest {
         assertEquals(CompareRevision("a", "a"), preferredCompareRevision(stash, "a"))
     }
 
+    @Test fun `native log uses readable ref only while it still points to selected commit`() {
+        val selected = CompareRevision("abc123", "origin/test")
+
+        assertEquals(RevisionLogTarget.Reference("origin/test"), revisionLogTarget(selected, "ABC123"))
+        assertEquals(RevisionLogTarget.Commit("abc123"), revisionLogTarget(selected, "def456"))
+        assertEquals(RevisionLogTarget.Commit("abc123"), revisionLogTarget(selected, null))
+        assertEquals(RevisionLogTarget.Commit("abc123"), revisionLogTarget(CompareRevision("abc123", "abc123"), "abc123"))
+    }
+
     private fun snapshot(head: HeadState, vararg refs: RevisionRef) = GraphSnapshot(
         commits = listOf(CommitNode("a", emptyList(), 0, "subject")),
         refsByCommit = refs.groupBy { it.target },

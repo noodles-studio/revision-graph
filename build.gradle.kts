@@ -20,6 +20,8 @@ dependencies {
         bundledPlugin("Git4Idea")
         bundledModule("intellij.platform.vcs.dvcs")
         bundledModule("intellij.platform.vcs.dvcs.impl")
+        bundledModule("intellij.platform.vcs.log")
+        bundledModule("intellij.platform.vcs.log.impl")
         pluginVerifier()
         zipSigner()
     }
