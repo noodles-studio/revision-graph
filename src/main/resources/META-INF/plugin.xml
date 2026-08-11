@@ -10,6 +10,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Revision Graph" anchor="right"
+                    icon="io.github.noodles_studio.revisiongraph.icons.RevisionGraphIcons.ToolWindow"
                     factoryClass="io.github.noodles_studio.revisiongraph.ui.RevisionGraphToolWindowFactory"
                     canCloseContents="false"/>
     </extensions>
@@ -17,6 +18,7 @@
     <actions>
         <action id="io.github.noodles_studio.revisiongraph.Open"
                 class="io.github.noodles_studio.revisiongraph.ui.OpenRevisionGraphAction"
+                icon="io.github.noodles_studio.revisiongraph.icons.RevisionGraphIcons.ToolWindow"
                 text="%action.open.text" description="%action.open.description">
             <add-to-group group-id="Git.Menu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
