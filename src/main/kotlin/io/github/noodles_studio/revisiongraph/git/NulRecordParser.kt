@@ -1,4 +1,4 @@
-package io.github.fh00126072001.revisiongraph.git
+package io.github.noodles_studio.revisiongraph.git
 
 import java.io.InputStream
 

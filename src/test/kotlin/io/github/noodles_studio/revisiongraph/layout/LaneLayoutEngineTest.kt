@@ -1,6 +1,6 @@
-package io.github.fh00126072001.revisiongraph.layout
+package io.github.noodles_studio.revisiongraph.layout
 
-import io.github.fh00126072001.revisiongraph.model.*
+import io.github.noodles_studio.revisiongraph.model.*
 import kotlin.test.*
 
 class LayeredDagLayoutEngineTest {

@@ -1,14 +1,22 @@
-package io.github.fh00126072001.revisiongraph.ui
+package io.github.noodles_studio.revisiongraph.ui
 
-import io.github.fh00126072001.revisiongraph.model.CommitNode
-import io.github.fh00126072001.revisiongraph.model.GraphSnapshot
-import io.github.fh00126072001.revisiongraph.model.HeadState
-import io.github.fh00126072001.revisiongraph.model.RefKind
-import io.github.fh00126072001.revisiongraph.model.RevisionRef
+import io.github.noodles_studio.revisiongraph.model.CommitNode
+import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
+import io.github.noodles_studio.revisiongraph.model.HeadState
+import io.github.noodles_studio.revisiongraph.model.RefKind
+import io.github.noodles_studio.revisiongraph.model.RevisionRef
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class RevisionSelectionTest {
+    @Test fun `zoom percentage accepts presets and manual decimal input`() {
+        assertEquals(125.0, parseZoomPercent("125%"))
+        assertEquals(12.5, parseZoomPercent(" 12,5 % "))
+        assertNull(parseZoomPercent("not a zoom"))
+        assertNull(parseZoomPercent("0%"))
+    }
+
     @Test fun `plain click selects base and clicking it again clears selection`() {
         val selected = RevisionSelection.EMPTY.click("a", additive = false)
 

@@ -1,4 +1,4 @@
-package io.github.fh00126072001.revisiongraph.model
+package io.github.noodles_studio.revisiongraph.model
 
 data class CommitNode(
     val hash: String,

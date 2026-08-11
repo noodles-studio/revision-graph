@@ -1,10 +1,10 @@
-package io.github.fh00126072001.revisiongraph.git
+package io.github.noodles_studio.revisiongraph.git
 
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import git4idea.config.GitExecutableManager
-import io.github.fh00126072001.revisiongraph.RevisionGraphBundle.message
-import io.github.fh00126072001.revisiongraph.model.*
+import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
+import io.github.noodles_studio.revisiongraph.model.*
 import java.io.ByteArrayInputStream
 import java.nio.file.Path
 import java.util.concurrent.Executors

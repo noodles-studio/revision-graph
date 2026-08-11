@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.18.1"
 }
 
-group = "io.github.fh00126072001.revisiongraph"
+group = "io.github.noodles_studio"
 version = "0.1.0"
 
 kotlin { jvmToolchain(25) }

@@ -1,8 +1,10 @@
-package io.github.fh00126072001.revisiongraph.ui
+package io.github.noodles_studio.revisiongraph.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.progress.ProgressIndicator
@@ -21,6 +23,7 @@ import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.components.*
 import com.intellij.ui.content.Content
 import com.intellij.util.Alarm
+import com.intellij.util.ui.JBUI
 import com.intellij.vcs.log.Hash
 import com.intellij.vcs.log.VcsLogFilterCollection
 import com.intellij.vcs.log.impl.VcsProjectLog
@@ -31,15 +34,19 @@ import git4idea.commands.Git
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryChangeListener
 import git4idea.repo.GitRepositoryManager
-import io.github.fh00126072001.revisiongraph.RevisionGraphBundle.message
-import io.github.fh00126072001.revisiongraph.git.GitClient
-import io.github.fh00126072001.revisiongraph.layout.GraphLayout
-import io.github.fh00126072001.revisiongraph.layout.LayeredDagLayoutEngine
-import io.github.fh00126072001.revisiongraph.model.*
+import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
+import io.github.noodles_studio.revisiongraph.git.GitClient
+import io.github.noodles_studio.revisiongraph.layout.GraphLayout
+import io.github.noodles_studio.revisiongraph.layout.LayeredDagLayoutEngine
+import io.github.noodles_studio.revisiongraph.model.*
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Point
+import java.awt.event.FocusAdapter
+import java.awt.event.FocusEvent
+import java.awt.event.KeyEvent
 import java.lang.ref.WeakReference
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicLong
@@ -71,10 +78,20 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private val generation = AtomicLong()
     private val cache = mutableMapOf<Path, Pair<GraphSnapshot, GraphLayout>>()
     private var roots = emptyList<Path>()
-    private val rootBox = ComboBox<Path>()
-    private val refresh = JButton(message("toolbar.refresh"))
+    private val rootBox = ComboBox<Path>().apply {
+        isVisible = false
+        preferredSize = Dimension(180, 26)
+        toolTipText = message("toolbar.repository")
+    }
+    private val zoomBox = ComboBox(arrayOf("25%", "50%", "75%", "100%", "125%", "150%", "200%", "300%")).apply {
+        isEditable = true
+        isFocusable = true
+        prototypeDisplayValue = "300%"
+        preferredSize = JBUI.size(88, 26)
+        minimumSize = preferredSize
+        toolTipText = message("toolbar.zoom.percent")
+    }
     private val graphSummary = JBLabel()
-    private val zoomLabel = JBLabel("100%", SwingConstants.CENTER)
     private val status = JBLabel(message("status.loading"), SwingConstants.CENTER)
     private val retry = JButton(message("status.retry"))
     private val canvas = RevisionGraphCanvas()
@@ -83,33 +100,56 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private var currentRoot: Path? = null
     private var graphIndicator: ProgressIndicator? = null
     private var updatingRoots = false
+    private var updatingZoom = false
+    private var graphLoading = false
+    private val refreshAction = object : DumbAwareAction(
+        message("toolbar.refresh"),
+        message("toolbar.refresh.tooltip"),
+        AllIcons.Actions.Refresh,
+    ) {
+        override fun actionPerformed(e: AnActionEvent) = refreshGraph()
+        override fun update(e: AnActionEvent) { e.presentation.isEnabled = !graphLoading }
+    }
+    private val refreshToolbar: ActionToolbar
 
     val component: JComponent
 
     init {
+        refreshToolbar = ActionManager.getInstance().createActionToolbar(
+            ActionPlaces.TOOLBAR,
+            DefaultActionGroup(refreshAction),
+            true,
+        ).apply {
+            targetComponent = canvas
+            setMiniMode(true)
+            component.isOpaque = false
+        }
         val toolbar = JPanel(BorderLayout()).apply {
             border = EmptyBorder(7, 10, 7, 10)
             add(JPanel(FlowLayout(FlowLayout.LEADING, 7, 0)).apply {
                 isOpaque = false
-                add(JBLabel(message("toolbar.repository"))); add(rootBox); add(refresh)
+                add(refreshToolbar.component); add(rootBox)
                 add(JSeparator(SwingConstants.VERTICAL).apply { preferredSize = java.awt.Dimension(1, 22) })
                 add(graphSummary)
             }, BorderLayout.WEST)
             add(JPanel(FlowLayout(FlowLayout.TRAILING, 4, 0)).apply {
                 isOpaque = false
                 add(toolbarButton("−", message("toolbar.zoom.out")) { canvas.zoomOut() })
-                add(zoomLabel.apply { preferredSize = java.awt.Dimension(48, 26) })
+                add(zoomBox)
                 add(toolbarButton("+", message("toolbar.zoom.in")) { canvas.zoomIn() })
-                add(toolbarButton(message("toolbar.fit"), message("toolbar.fit.tooltip")) { canvas.fitToView() })
-                add(toolbarButton("1:1", message("toolbar.reset.tooltip")) { canvas.resetView() })
+                add(fitButton())
             }, BorderLayout.EAST)
         }
         cards.add(canvas, "graph")
         cards.add(JPanel(BorderLayout()).apply { add(status, BorderLayout.CENTER); add(JPanel().apply { add(retry) }, BorderLayout.SOUTH) }, "status")
         component = JPanel(BorderLayout()).apply { add(toolbar, BorderLayout.NORTH); add(cards, BorderLayout.CENTER) }
         rootBox.renderer = object : DefaultListCellRenderer() {
-            override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean) =
-                super.getListCellRendererComponent(list, (value as? Path)?.toString() ?: value, index, isSelected, cellHasFocus)
+            override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): java.awt.Component {
+                val path = value as? Path
+                return super.getListCellRendererComponent(list, path?.let(::repositoryDisplayName) ?: value, index, isSelected, cellHasFocus).also {
+                    (it as? JComponent)?.toolTipText = path?.toString()
+                }
+            }
         }
         rootBox.addActionListener {
             if (updatingRoots) return@addActionListener
@@ -120,11 +160,19 @@ private class RevisionGraphView(private val project: Project) : Disposable {
                 load(false)
             }
         }
-        refresh.addActionListener { refreshRoots(); load(true) }
-        retry.addActionListener { refreshRoots(); load(true) }
+        zoomBox.addActionListener { if (!updatingZoom) applyZoomFromEditor() }
+        (zoomBox.editor.editorComponent as? JTextField)?.addFocusListener(object : FocusAdapter() {
+            override fun focusLost(e: FocusEvent) = applyZoomFromEditor()
+        })
+        retry.addActionListener { refreshGraph() }
         canvas.onContextMenu = ::showContextMenu
         canvas.onRevisionSelected = ::showSharedLog
-        canvas.onZoomChanged = { zoomLabel.text = "$it%" }
+        canvas.onZoomChanged = ::updateZoomBox
+        updateZoomBox(canvas.zoomPercent())
+        component.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0), "refreshGraph")
+        component.actionMap.put("refreshGraph", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) { if (!graphLoading) refreshGraph() }
+        })
         project.messageBus.connect(this).subscribe(GitRepository.GIT_REPO_CHANGE, GitRepositoryChangeListener { repository ->
             if (repository.root.toNioPath() == currentRoot) {
                 alarm.cancelAllRequests(); alarm.addRequest({ if (component.isShowing) load(true) }, 500)
@@ -146,7 +194,10 @@ private class RevisionGraphView(private val project: Project) : Disposable {
             .filter { it.vcs?.name.equals("Git", ignoreCase = true) }
             .map { it.path.toNioPath() }
         val discovered = (repositoryRoots.asSequence() + mappedRoots).distinct().sortedBy(Path::toString).toList()
-        if (discovered == roots) return
+        if (discovered == roots) {
+            rootBox.isVisible = discovered.size > 1
+            return
+        }
         val previous = currentRoot
         roots = discovered
         updatingRoots = true
@@ -155,15 +206,69 @@ private class RevisionGraphView(private val project: Project) : Disposable {
             currentRoot = previous?.takeIf { it in discovered } ?: discovered.firstOrNull()
             if (currentRoot != previous) canvas.clearSelection()
             rootBox.selectedItem = currentRoot
-            rootBox.isEnabled = discovered.size > 1
+            rootBox.isVisible = discovered.size > 1
         } finally { updatingRoots = false }
+    }
+
+    private fun refreshGraph() {
+        refreshRoots()
+        load(true)
+    }
+
+    private fun repositoryDisplayName(path: Path): String {
+        val shortName = path.fileName?.toString() ?: path.toString()
+        if (roots.count { it.fileName?.toString() == shortName } <= 1) return shortName
+        val base = project.basePath?.let(Path::of) ?: return path.toString()
+        return runCatching { base.toAbsolutePath().normalize().relativize(path.toAbsolutePath().normalize()).toString() }
+            .getOrNull()?.takeIf { it.isNotBlank() && !it.startsWith("..") } ?: path.toString()
+    }
+
+    private fun applyZoomFromEditor() {
+        val percent = parseZoomPercent(zoomBox.editor.item)
+        if (percent == null) updateZoomBox(canvas.zoomPercent()) else canvas.setZoomPercent(percent)
+    }
+
+    private fun updateZoomBox(percent: Int) {
+        updatingZoom = true
+        try { zoomBox.editor.item = "$percent%" } finally { updatingZoom = false }
+    }
+
+    private fun fitButton() = JButton("${message("toolbar.fit")} ▾").apply {
+        toolTipText = message("toolbar.fit.tooltip")
+        isFocusable = false
+        margin = java.awt.Insets(2, 9, 2, 9)
+        addActionListener { showFitMenu(this) }
+    }
+
+    private fun showFitMenu(anchor: JComponent) {
+        val group = DefaultActionGroup().apply {
+            add(object : DumbAwareAction(message("toolbar.fit.graph")) {
+                override fun actionPerformed(e: AnActionEvent) = canvas.fitToView()
+            })
+            add(object : DumbAwareAction(message("toolbar.fit.width")) {
+                override fun actionPerformed(e: AnActionEvent) = canvas.fitWidth()
+            })
+            add(object : DumbAwareAction(message("toolbar.fit.height")) {
+                override fun actionPerformed(e: AnActionEvent) = canvas.fitHeight()
+            })
+        }
+        ActionManager.getInstance().createActionPopupMenu(ActionPlaces.POPUP, group).component.show(anchor, 0, anchor.height)
+    }
+
+    private fun setGraphLoading(value: Boolean) {
+        graphLoading = value
+        refreshToolbar.updateActionsAsync()
     }
 
     private fun load(force: Boolean) {
         if (currentRoot == null) refreshRoots()
-        val root = currentRoot ?: return showStatus(message("status.no.selected.repository"), true)
+        val root = currentRoot ?: run {
+            generation.incrementAndGet(); graphIndicator?.cancel(); setGraphLoading(false)
+            return showStatus(message("status.no.selected.repository"), true)
+        }
         val id = generation.incrementAndGet(); graphIndicator?.cancel()
         if (!force) cache[root]?.let { (snapshot, layout) -> publish(snapshot, layout); return }
+        setGraphLoading(true)
         showStatus(message("status.loading.graph"), false)
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.loading.graph"), true) {
             private var result: LoadResult<Pair<GraphSnapshot, GraphLayout>>? = null
@@ -177,6 +282,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
             }
             override fun onFinished() {
                 if (generation.get() != id || project.isDisposed) return
+                setGraphLoading(false)
                 when (val value = result) {
                     is LoadResult.Success -> { cache[root] = value.value; publish(value.value.first, value.value.second) }
                     is LoadResult.Empty -> showStatus(value.reason, true)
@@ -251,6 +357,14 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     }
     private fun escape(value: String) = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 }
+
+internal fun parseZoomPercent(value: Any?): Double? = value?.toString()
+    ?.trim()
+    ?.removeSuffix("%")
+    ?.trim()
+    ?.replace(',', '.')
+    ?.toDoubleOrNull()
+    ?.takeIf { it.isFinite() && it > 0.0 }
 
 internal class RevisionCompareService(private val project: Project) {
     private val repositoryManager = GitRepositoryManager.getInstance(project)

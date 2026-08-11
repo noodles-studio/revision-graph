@@ -1,6 +1,6 @@
-package io.github.fh00126072001.revisiongraph.git
+package io.github.noodles_studio.revisiongraph.git
 
-import io.github.fh00126072001.revisiongraph.model.*
+import io.github.noodles_studio.revisiongraph.model.*
 import java.io.InputStream
 
 object GitParsers {

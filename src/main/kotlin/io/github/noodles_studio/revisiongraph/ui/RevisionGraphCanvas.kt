@@ -1,11 +1,11 @@
-package io.github.fh00126072001.revisiongraph.ui
+package io.github.noodles_studio.revisiongraph.ui
 
 import com.intellij.ui.JBColor
-import io.github.fh00126072001.revisiongraph.RevisionGraphBundle.message
-import io.github.fh00126072001.revisiongraph.layout.GraphLayout
-import io.github.fh00126072001.revisiongraph.layout.NodeLayout
-import io.github.fh00126072001.revisiongraph.model.GraphSnapshot
-import io.github.fh00126072001.revisiongraph.model.RefKind
+import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
+import io.github.noodles_studio.revisiongraph.layout.GraphLayout
+import io.github.noodles_studio.revisiongraph.layout.NodeLayout
+import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
+import io.github.noodles_studio.revisiongraph.model.RefKind
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -21,6 +21,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /** RevisionGraph-style block topology with IDEA-aware colors and interaction. */
 class RevisionGraphCanvas : JComponent() {
@@ -29,7 +30,7 @@ class RevisionGraphCanvas : JComponent() {
     var onZoomChanged: ((Int) -> Unit)? = null
     private var snapshot: GraphSnapshot? = null
     private var layout: GraphLayout? = null
-    private var scale = .92
+    private var scale = 1.0
     private var offsetX = 28.0
     private var offsetY = 22.0
     private var selection = RevisionSelection.EMPTY
@@ -101,13 +102,33 @@ class RevisionGraphCanvas : JComponent() {
     fun clearSelection() = updateSelection(RevisionSelection.EMPTY)
     fun zoomIn() = zoomAt(1.18, Point(width / 2, height / 2))
     fun zoomOut() = zoomAt(.84, Point(width / 2, height / 2))
-    fun resetView() { scale = .92; offsetX = 28.0; offsetY = 22.0; zoomChanged(); repaint() }
+    fun zoomPercent() = (scale * 100.0).roundToInt()
+    fun setZoomPercent(percent: Double) = zoomAt(percent.coerceIn(12.0, 350.0) / 100.0 / scale, Point(width / 2, height / 2))
+    fun resetView() { scale = 1.0; offsetX = 28.0; offsetY = 22.0; zoomChanged(); repaint() }
 
     fun fitToView() {
         val graph = layout ?: return
         if (width < 50 || height < 50) return
         scale = min(1.0, min((width - 56.0) / graph.bounds.width, (height - 48.0) / graph.bounds.height)).coerceAtLeast(.12)
         offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0); offsetY = 24.0
+        zoomChanged(); repaint()
+    }
+
+    fun fitWidth() {
+        val graph = layout ?: return
+        if (width < 50) return
+        scale = min(1.0, (width - 56.0) / graph.bounds.width).coerceAtLeast(.12)
+        offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0)
+        offsetY = 24.0
+        zoomChanged(); repaint()
+    }
+
+    fun fitHeight() {
+        val graph = layout ?: return
+        if (height < 50) return
+        scale = min(1.0, (height - 48.0) / graph.bounds.height).coerceAtLeast(.12)
+        offsetX = 28.0
+        offsetY = max(24.0, (height - graph.bounds.height * scale) / 2.0)
         zoomChanged(); repaint()
     }
 
@@ -118,7 +139,7 @@ class RevisionGraphCanvas : JComponent() {
         zoomChanged(); repaint()
     }
 
-    private fun zoomChanged() = onZoomChanged?.invoke((scale * 100).toInt())
+    private fun zoomChanged() = onZoomChanged?.invoke(zoomPercent())
 
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)

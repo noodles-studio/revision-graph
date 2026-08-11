@@ -1,8 +1,8 @@
-package io.github.fh00126072001.revisiongraph.layout
+package io.github.noodles_studio.revisiongraph.layout
 
-import io.github.fh00126072001.revisiongraph.RevisionGraphBundle.message
-import io.github.fh00126072001.revisiongraph.model.CommitNode
-import io.github.fh00126072001.revisiongraph.model.GraphSnapshot
+import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
+import io.github.noodles_studio.revisiongraph.model.CommitNode
+import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import java.awt.geom.Point2D
 import java.awt.geom.Rectangle2D
 import java.util.PriorityQueue

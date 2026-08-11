@@ -1,8 +1,8 @@
-package io.github.fh00126072001.revisiongraph.ui
+package io.github.noodles_studio.revisiongraph.ui
 
-import io.github.fh00126072001.revisiongraph.model.GraphSnapshot
-import io.github.fh00126072001.revisiongraph.model.RefKind
-import io.github.fh00126072001.revisiongraph.model.RevisionRef
+import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
+import io.github.noodles_studio.revisiongraph.model.RefKind
+import io.github.noodles_studio.revisiongraph.model.RevisionRef
 
 internal data class RevisionSelection(
     val baseHash: String? = null,

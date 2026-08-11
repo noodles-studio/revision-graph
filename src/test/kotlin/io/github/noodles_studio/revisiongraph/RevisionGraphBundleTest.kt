@@ -1,4 +1,4 @@
-package io.github.fh00126072001.revisiongraph
+package io.github.noodles_studio.revisiongraph
 
 import java.util.Properties
 import kotlin.test.Test
