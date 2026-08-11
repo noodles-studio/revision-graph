@@ -192,6 +192,21 @@ private class RevisionGraphView(private val project: Project) : Disposable {
             e.presentation.description = message(if (graphFilter.isActive) "toolbar.filter.active.tooltip" else "toolbar.filter.tooltip")
         }
     }
+    private val locateHeadAction = object : DumbAwareAction(
+        message("toolbar.locate.head"),
+        message("toolbar.locate.head.tooltip"),
+        AllIcons.General.Locate,
+    ) {
+        override fun actionPerformed(e: AnActionEvent) {
+            publishedHead?.hash?.let(canvas::focusRevision)
+        }
+
+        override fun update(e: AnActionEvent) {
+            val available = !graphLoading && canvas.containsRevision(publishedHead?.hash)
+            e.presentation.isEnabled = available
+            e.presentation.description = message(if (available) "toolbar.locate.head.tooltip" else "toolbar.locate.head.unavailable")
+        }
+    }
     private val refreshToolbar: ActionToolbar
 
     val component: JComponent
@@ -203,6 +218,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
                 add(refreshAction)
                 addSeparator()
                 add(filterAction)
+                add(locateHeadAction)
             },
             true,
         ).apply {
@@ -514,6 +530,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         locatorSnapshot = snapshot
         resetLocatorSearch()
         canvas.show(snapshot, layout, filterFocus ?: snapshot.head.hash?.takeIf { focusHead })
+        refreshToolbar.updateActionsAsync()
         setToolbarStatus(null)
         if (snapshot.commits.isEmpty()) showEmptyState() else (cards.layout as CardLayout).show(cards, "graph")
     }

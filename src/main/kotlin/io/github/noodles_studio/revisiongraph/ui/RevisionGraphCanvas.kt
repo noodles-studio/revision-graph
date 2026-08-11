@@ -129,6 +129,15 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         repaint()
     }
 
+    fun containsRevision(hash: String?): Boolean = hash != null && layout?.byHash?.containsKey(hash) == true
+
+    fun focusRevision(hash: String): Boolean {
+        if (!containsRevision(hash)) return false
+        pendingFocusHash = hash
+        repaint()
+        return true
+    }
+
     fun fitToView() {
         val graph = layout ?: return
         if (width < 50 || height < 50) return
