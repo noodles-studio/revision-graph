@@ -12,7 +12,7 @@ class RevisionGraphBundleTest {
 
         assertEquals(english.stringPropertyNames(), chinese.stringPropertyNames())
         assertEquals("Revision Graph", english.getProperty("toolwindow.title"))
-        assertEquals("修订图", chinese.getProperty("toolwindow.title"))
+        assertEquals("RevisionGraph", chinese.getProperty("toolwindow.title"))
     }
 
     private fun loadProperties(path: String): Properties = Properties().apply {

@@ -60,12 +60,17 @@ internal class LayeredDagLayoutEngine(
 
         val loaded = snapshot.commitsByHash.keys
         val orderByHash = ordered.withIndex().associate { it.value.hash to it.index }
-        val globalRanks = assignRanks(ordered, loaded, cancelled)
-        val stableLanes = assignStableLanes(ordered, loaded, globalRanks, cancelled)
         val components = weakComponents(ordered, loaded, cancelled).sortedWith(
             compareBy<Set<String>> { if (snapshot.head.hash in it) 0 else 1 }
                 .thenBy { component -> component.minOf { orderByHash.getValue(it) } },
         )
+        val globalRanks = buildMap {
+            components.forEach { hashes ->
+                val commits = ordered.filter { it.hash in hashes }
+                putAll(assignOptimalRanks(commits, hashes, cancelled))
+            }
+        }
+        val stableLanes = assignStableLanes(ordered, loaded, globalRanks, cancelled)
 
         val allNodes = mutableListOf<NodeLayout>()
         val allEdges = mutableListOf<EdgeLayout>()
@@ -73,7 +78,7 @@ internal class LayeredDagLayoutEngine(
         var graphHeight = 1.0
         components.forEach { hashes ->
             checkCancelled(cancelled)
-            val component = layoutComponent(snapshot, ordered, hashes, orderByHash, stableLanes, cancelled)
+            val component = layoutComponent(snapshot, ordered, hashes, orderByHash, globalRanks, stableLanes, cancelled)
             component.nodes.forEach { node ->
                 allNodes += node.copy(bounds = translated(node.bounds, componentX, graphPadding))
             }
@@ -119,11 +124,12 @@ internal class LayeredDagLayoutEngine(
         ordered: List<CommitNode>,
         hashes: Set<String>,
         orderByHash: Map<String, Int>,
+        globalRanks: Map<String, Int>,
         stableLanes: Map<String, Int>,
         cancelled: () -> Boolean,
     ): ComponentLayout {
         val commits = ordered.filter { it.hash in hashes }
-        val ranks = assignRanks(commits, hashes, cancelled)
+        val ranks = globalRanks.filterKeys { it in hashes }
         val vertices = LinkedHashMap<String, Vertex>()
         commits.forEach { commit ->
             val size = measureNode(snapshot, commit.hash)
@@ -390,17 +396,17 @@ internal class LayeredDagLayoutEngine(
         return NodeSize(width, height)
     }
 
-    private fun assignRanks(ordered: List<CommitNode>, loaded: Set<String>, cancelled: () -> Boolean): Map<String, Int> {
-        val ranks = ordered.associate { it.hash to 0 }.toMutableMap()
-        ordered.forEach { child ->
-            checkCancelled(cancelled)
-            val nextRank = ranks.getValue(child.hash) + 1
-            child.parents.filter { it in loaded }.forEach { parent ->
-                ranks[parent] = max(ranks.getValue(parent), nextRank)
-            }
-        }
-        return ranks
-    }
+    private fun assignOptimalRanks(
+        ordered: List<CommitNode>,
+        loaded: Set<String>,
+        cancelled: () -> Boolean,
+    ): Map<String, Int> = OptimalRanker().rank(
+        ordered.map { it.hash },
+        ordered.flatMap { child ->
+            child.parents.filter { it in loaded }.map { parent -> RankingEdge(child.hash, parent) }
+        },
+        cancelled,
+    )
 
     private fun assignStableLanes(
         ordered: List<CommitNode>,
