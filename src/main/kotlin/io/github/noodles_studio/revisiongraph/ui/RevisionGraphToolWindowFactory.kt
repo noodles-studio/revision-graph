@@ -56,6 +56,7 @@ import io.github.noodles_studio.revisiongraph.layout.LayeredDagLayoutEngine
 import io.github.noodles_studio.revisiongraph.model.*
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.Color
 import java.awt.Component
 import java.awt.datatransfer.StringSelection
 import java.awt.Dimension
@@ -157,6 +158,29 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         })
     }
     private val cards = JPanel(CardLayout())
+    private val watermark = object : JBLabel(message("watermark.powered.by")) {
+        override fun contains(x: Int, y: Int): Boolean = false
+    }.apply {
+        foreground = JBColor(Color(0x8C949E), Color(0x6F737A))
+        font = font.deriveFont(Font.PLAIN, (font.size2D - 1f).coerceAtLeast(10f))
+    }
+    private val graphArea = object : JLayeredPane() {
+        init {
+            add(cards, DEFAULT_LAYER)
+            add(watermark, PALETTE_LAYER)
+        }
+
+        override fun doLayout() {
+            cards.setBounds(0, 0, width, height)
+            val size = watermark.preferredSize
+            watermark.setBounds(
+                (width - size.width - JBUI.scale(12)).coerceAtLeast(0),
+                (height - size.height - JBUI.scale(10)).coerceAtLeast(0),
+                size.width,
+                size.height,
+            )
+        }
+    }
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var currentRoot: Path? = null
     private var publishedRoot: Path? = null
@@ -249,7 +273,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         cards.add(canvas, "graph")
         cards.add(emptyState, "empty")
         cards.add(JPanel(BorderLayout()).apply { add(status, BorderLayout.CENTER); add(JPanel().apply { add(retry) }, BorderLayout.SOUTH) }, "status")
-        component = JPanel(BorderLayout()).apply { add(toolbar, BorderLayout.NORTH); add(cards, BorderLayout.CENTER) }
+        component = JPanel(BorderLayout()).apply { add(toolbar, BorderLayout.NORTH); add(graphArea, BorderLayout.CENTER) }
         rootBox.renderer = object : DefaultListCellRenderer() {
             override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): java.awt.Component {
                 val path = value as? Path
