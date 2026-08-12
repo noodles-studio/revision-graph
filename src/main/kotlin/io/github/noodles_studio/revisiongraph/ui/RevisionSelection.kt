@@ -4,6 +4,8 @@ import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import io.github.noodles_studio.revisiongraph.model.HeadState
 import io.github.noodles_studio.revisiongraph.model.RefKind
 import io.github.noodles_studio.revisiongraph.model.RevisionRef
+import io.github.noodles_studio.revisiongraph.model.CompareRevision
+import io.github.noodles_studio.revisiongraph.model.RevisionLogTarget
 
 internal data class RevisionSelection(
     val baseHash: String? = null,
@@ -39,10 +41,6 @@ internal data class RevisionSelection(
     }
 }
 
-internal data class CompareRevision(val hash: String, val revision: String) {
-    val displayName: String = if (revision == hash) hash.take(8) else revision
-}
-
 internal data class RevisionCompareSelection(
     val base: CompareRevision,
     val target: CompareRevision? = null,
@@ -66,11 +64,6 @@ internal fun checkoutAvailable(ref: RevisionRef, head: HeadState?): Boolean = wh
     RefKind.LOCAL_BRANCH -> ref.displayName != head?.branch
     RefKind.REMOTE_BRANCH, RefKind.TAG, RefKind.ANNOTATED_TAG -> true
     else -> false
-}
-
-internal sealed interface RevisionLogTarget {
-    data class Reference(val name: String) : RevisionLogTarget
-    data class Commit(val hash: String) : RevisionLogTarget
 }
 
 internal fun revisionLogTarget(selected: CompareRevision, resolvedRevisionHash: String?): RevisionLogTarget =

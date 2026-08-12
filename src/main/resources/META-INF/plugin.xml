@@ -1,8 +1,12 @@
 <idea-plugin>
     <id>io.github.noodles_studio.revisiongraph</id>
     <name>Revision Graph</name>
-    <vendor>Noodles Studio</vendor>
-    <description><![CDATA[An interactive, native IntelliJ revision graph backed by Git.]]></description>
+    <vendor url="https://github.com/noodles-studio">Noodles Studio</vendor>
+    <description><![CDATA[
+        <p>An interactive, native IntelliJ revision graph backed by Git.</p>
+        <p>Explore branches, tags, merges, and repository topology; compare or check out revisions;
+        and open focused Git Log views using the IDE's bundled Git integration.</p>
+    ]]></description>
     <resource-bundle>messages.RevisionGraphBundle</resource-bundle>
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.vcs</depends>

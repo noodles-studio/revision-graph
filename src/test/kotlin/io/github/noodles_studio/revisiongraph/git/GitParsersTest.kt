@@ -2,7 +2,10 @@ package io.github.noodles_studio.revisiongraph.git
 
 import io.github.noodles_studio.revisiongraph.model.RefKind
 import java.io.ByteArrayInputStream
-import kotlin.test.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class GitParsersTest {
     private fun bytes(vararg fields: String) = fields.joinToString("\u0000", postfix = "\u0000").toByteArray()

@@ -1,7 +1,16 @@
 package io.github.noodles_studio.revisiongraph.layout
 
-import io.github.noodles_studio.revisiongraph.model.*
-import kotlin.test.*
+import io.github.noodles_studio.revisiongraph.model.CommitNode
+import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
+import io.github.noodles_studio.revisiongraph.model.HeadState
+import io.github.noodles_studio.revisiongraph.model.RefKind
+import io.github.noodles_studio.revisiongraph.model.RevisionRef
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 class LayeredDagLayoutEngineTest {
     private fun node(id: Char, vararg parents: Char) = CommitNode(id.toString().repeat(40), parents.map { it.toString().repeat(40) }, 0, id.toString())

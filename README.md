@@ -1,14 +1,14 @@
 # RevisionGraph
 
 [![License: GPL v2 or later](https://img.shields.io/badge/License-GPL_v2_or_later-blue.svg)](LICENSE)
-[![IntelliJ Platform](https://img.shields.io/badge/IntelliJ_Platform-2026.2-7B61FF.svg)](https://plugins.jetbrains.com/)
+[![IntelliJ Platform](https://img.shields.io/badge/IntelliJ_Platform-2025.3–2026.2-7B61FF.svg)](https://plugins.jetbrains.com/)
 
 RevisionGraph is a native IntelliJ IDEA plugin for exploring Git history as a clear, interactive
 branch graph. It brings the tree-oriented readability of TortoiseGit's RevisionGraph to the
 IntelliJ Platform while delegating comparisons, Git Log views, and checkout operations to the
 IDE's bundled Git4Idea integration.
 
-The project is under active development and currently targets IntelliJ IDEA 2026.2.x.
+The project is under active development and supports IntelliJ IDEA 2025.3 through 2026.2.x.
 
 ## Why RevisionGraph?
 
@@ -40,10 +40,10 @@ stretched across the entire canvas.
 
 ## Requirements
 
-- IntelliJ IDEA 2026.2.x (platform build `262`).
+- IntelliJ IDEA 2025.3 through 2026.2.x (platform builds `253`–`262`).
 - Git support enabled in the IDE.
 - A Git repository configured as a project VCS root.
-- JDK 25 when building the plugin from source.
+- JDK 21 or newer when building the plugin from source.
 
 ## Installation
 
@@ -106,6 +106,10 @@ logs, and checkout operations are handled by the installed IntelliJ Git integrat
 
 ## Development
 
+The project compiles against the oldest supported platform, IntelliJ IDEA 2025.3, using a Java 21
+bytecode target. JetBrains Plugin Verifier checks the packaged plugin against 2025.3, 2026.1, and
+2026.2. See [Architecture](docs/architecture.md) for package boundaries and compatibility policy.
+
 Run the test suite:
 
 ```bash
@@ -126,6 +130,8 @@ Run a development IDE:
 
 Contributions and issue reports are welcome. Please keep behavior changes covered by focused unit
 tests, especially changes to Git parsing, selection rules, or graph layout.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development and pull request checklist.
 
 ## License and provenance
 

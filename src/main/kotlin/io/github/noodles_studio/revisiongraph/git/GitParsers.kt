@@ -1,6 +1,8 @@
 package io.github.noodles_studio.revisiongraph.git
 
-import io.github.noodles_studio.revisiongraph.model.*
+import io.github.noodles_studio.revisiongraph.model.CommitNode
+import io.github.noodles_studio.revisiongraph.model.RefKind
+import io.github.noodles_studio.revisiongraph.model.RevisionRef
 import java.io.InputStream
 
 object GitParsers {

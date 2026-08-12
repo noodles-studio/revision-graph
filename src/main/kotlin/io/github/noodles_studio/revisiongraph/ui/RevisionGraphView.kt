@@ -16,44 +16,31 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
-import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.ProjectLevelVcsManager
-import com.intellij.openapi.wm.ToolWindow
-import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.openapi.wm.ToolWindowId
-import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.ui.components.*
-import com.intellij.ui.SearchTextField
 import com.intellij.ui.JBColor
-import com.intellij.ui.content.Content
+import com.intellij.ui.SearchTextField
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.Alarm
-import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
-import com.intellij.vcs.log.Hash
-import com.intellij.vcs.log.VcsLogFilterCollection
-import com.intellij.vcs.log.impl.VcsProjectLog
-import com.intellij.vcs.log.ui.MainVcsLogUi
-import com.intellij.vcs.log.visible.filters.VcsLogFilterObject
-import git4idea.GitReference
-import git4idea.GitTag
-import git4idea.actions.ref.GitCheckoutAction
-import git4idea.branch.GitBrancher
-import git4idea.commands.Git
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryChangeListener
 import git4idea.repo.GitRepositoryManager
 import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
-import io.github.noodles_studio.revisiongraph.git.GitClient
+import io.github.noodles_studio.revisiongraph.application.RevisionGraphDocument
+import io.github.noodles_studio.revisiongraph.application.RevisionGraphLoader
 import io.github.noodles_studio.revisiongraph.git.RevisionGraphFilter
-import io.github.noodles_studio.revisiongraph.git.parseRevisionList
 import io.github.noodles_studio.revisiongraph.layout.GraphLayout
-import io.github.noodles_studio.revisiongraph.layout.GraphTypography
-import io.github.noodles_studio.revisiongraph.layout.LayeredDagLayoutEngine
-import io.github.noodles_studio.revisiongraph.model.*
+import io.github.noodles_studio.revisiongraph.model.CompareRevision
+import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
+import io.github.noodles_studio.revisiongraph.model.HeadState
+import io.github.noodles_studio.revisiongraph.model.LoadResult
+import io.github.noodles_studio.revisiongraph.model.RefKind
+import io.github.noodles_studio.revisiongraph.model.RevisionRef
+import io.github.noodles_studio.revisiongraph.platform.RevisionCheckoutService
+import io.github.noodles_studio.revisiongraph.platform.RevisionCompareService
+import io.github.noodles_studio.revisiongraph.platform.RevisionLogService
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
@@ -66,43 +53,35 @@ import java.awt.GridBagLayout
 import java.awt.Point
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
-import java.awt.event.ActionEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
-import java.lang.ref.WeakReference
 import java.nio.file.Path
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
+import javax.swing.AbstractAction
+import javax.swing.Box
+import javax.swing.BoxLayout
+import javax.swing.DefaultComboBoxModel
+import javax.swing.DefaultListCellRenderer
+import javax.swing.JButton
+import javax.swing.JComponent
+import javax.swing.JLayeredPane
+import javax.swing.JList
+import javax.swing.JPanel
+import javax.swing.JTextField
+import javax.swing.KeyStroke
+import javax.swing.SwingConstants
+import javax.swing.border.EmptyBorder
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
-import javax.swing.*
-import javax.swing.border.EmptyBorder
 
-class RevisionGraphToolWindowFactory : ToolWindowFactory, DumbAware {
-    override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        toolWindow.setStripeTitleProvider { message("toolwindow.title") }
-        toolWindow.title = message("toolwindow.title")
-        val view = RevisionGraphView(project)
-        val content = toolWindow.contentManager.factory.createContent(view.component, "", false)
-        content.setDisposer(view)
-        toolWindow.contentManager.addContent(content)
-    }
-}
 
-class OpenRevisionGraphAction : DumbAwareAction() {
-    override fun actionPerformed(e: AnActionEvent) {
-        e.project?.let { ToolWindowManager.getInstance(it).getToolWindow("Revision Graph")?.show() }
-    }
-    override fun update(e: AnActionEvent) { e.presentation.isEnabledAndVisible = e.project != null }
-}
-
-private class RevisionGraphView(private val project: Project) : Disposable {
-    private val git = GitClient(project)
+internal class RevisionGraphView(private val project: Project) : Disposable {
     private val comparisons = RevisionCompareService(project)
     private val checkouts = RevisionCheckoutService(project)
     private val logs = RevisionLogService(project)
     private val generation = AtomicLong()
-    private val cache = mutableMapOf<Path, Pair<GraphSnapshot, GraphLayout>>()
+    private val cache = mutableMapOf<Path, RevisionGraphDocument>()
     private val revisionNamesByRoot = mutableMapOf<Path, List<String>>()
     private var roots = emptyList<Path>()
     private val rootBox = ComboBox<Path>().apply {
@@ -128,6 +107,7 @@ private class RevisionGraphView(private val project: Project) : Disposable {
     private val status = JBLabel(message("status.loading"), SwingConstants.CENTER)
     private val retry = JButton(message("status.retry"))
     private val typography = GraphTypography.fromIdeaDefaults()
+    private val loader = RevisionGraphLoader(project, typography)
     private val canvas = RevisionGraphCanvas(typography)
     private val emptyTitle = JBLabel("", SwingConstants.CENTER).apply {
         font = font.deriveFont(Font.BOLD, 15f)
@@ -514,31 +494,25 @@ private class RevisionGraphView(private val project: Project) : Disposable {
         }
         val id = generation.incrementAndGet(); graphIndicator?.cancel()
         val requestedFilter = graphFilter
-        if (!force) cache[root]?.let { (snapshot, layout) -> publish(snapshot, layout); return }
+        if (!force) cache[root]?.let { document -> publish(document.snapshot, document.layout); return }
         val keepGraphVisible = publishedRoot == root && cache[root] != null
         setGraphLoading(true)
         if (keepGraphVisible) setToolbarStatus(message("status.refreshing.graph"))
         else showStatus(message("status.loading.graph"), false)
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.loading.graph"), true) {
-            private var result: LoadResult<Pair<GraphSnapshot, GraphLayout>>? = null
+            private var result: LoadResult<RevisionGraphDocument>? = null
             override fun run(indicator: ProgressIndicator) {
                 graphIndicator = indicator
-                result = when (val loaded = git.loadGraph(root, indicator, requestedFilter)) {
-                    is LoadResult.Success -> try { LoadResult.Success(loaded.value to LayeredDagLayoutEngine(textMetrics = typography).layout(loaded.value) { indicator.isCanceled }) }
-                        catch (_: InterruptedException) { LoadResult.Cancelled }
-                    is LoadResult.Empty -> {
-                        val empty = GraphSnapshot(emptyList(), emptyMap(), HeadState(null, null, false))
-                        LoadResult.Success(empty to LayeredDagLayoutEngine(textMetrics = typography).layout(empty) { indicator.isCanceled })
-                    }
-                    is LoadResult.Failure -> loaded
-                    LoadResult.Cancelled -> LoadResult.Cancelled
-                }
+                result = loader.load(root, requestedFilter) { indicator.isCanceled }
             }
             override fun onFinished() {
                 if (generation.get() != id || project.isDisposed) return
                 setGraphLoading(false)
                 when (val value = result) {
-                    is LoadResult.Success -> { cache[root] = value.value; publish(value.value.first, value.value.second) }
+                    is LoadResult.Success -> {
+                        cache[root] = value.value
+                        publish(value.value.snapshot, value.value.layout)
+                    }
                     is LoadResult.Empty -> showStatus(value.reason, true)
                     is LoadResult.Failure -> {
                         val details = "${value.summary}${value.details?.let { ": $it" }.orEmpty()}"
@@ -692,172 +666,6 @@ internal fun parseZoomPercent(value: Any?): Double? = value?.toString()
     ?.toDoubleOrNull()
     ?.takeIf { it.isFinite() && it > 0.0 }
 
-private class RevisionGraphFilterDialog(
-    project: Project,
-    initial: RevisionGraphFilter,
-    private val revisionNames: List<String>,
-) : DialogWrapper(project) {
-    private val fromField = TextFieldWithBrowseButton()
-    private val toField = TextFieldWithBrowseButton()
-    private val currentBranchBox = JBCheckBox(message("filter.current.branch"), initial.currentBranchOnly)
-    private val localBranchesBox = JBCheckBox(message("filter.local.branches"), initial.localBranchesOnly)
-    private var resetRequested = false
-
-    init {
-        title = message("filter.dialog.title")
-        fromField.text = initial.excludedRevisions.joinToString(" ")
-        toField.text = initial.includedRevisions.joinToString(" ")
-        fromField.textField.toolTipText = message("filter.revisions.placeholder")
-        toField.textField.toolTipText = message("filter.revisions.placeholder")
-        fromField.addActionListener { showRevisionChooser(fromField) }
-        toField.addActionListener { showRevisionChooser(toField) }
-        currentBranchBox.addActionListener {
-            if (currentBranchBox.isSelected) {
-                localBranchesBox.isSelected = false
-                toField.text = ""
-            }
-            updateRangeControls()
-        }
-        localBranchesBox.addActionListener {
-            if (localBranchesBox.isSelected) {
-                currentBranchBox.isSelected = false
-                toField.text = ""
-            }
-            updateRangeControls()
-        }
-        updateRangeControls()
-        init()
-        setOKButtonText(message("filter.apply"))
-    }
-
-    fun selectedFilter(): RevisionGraphFilter {
-        if (resetRequested) return RevisionGraphFilter.NONE
-        val fixedScope = currentBranchBox.isSelected || localBranchesBox.isSelected
-        return RevisionGraphFilter(
-            excludedRevisions = parseRevisionList(fromField.text),
-            includedRevisions = if (fixedScope) emptyList() else parseRevisionList(toField.text),
-            currentBranchOnly = currentBranchBox.isSelected,
-            localBranchesOnly = localBranchesBox.isSelected,
-        )
-    }
-
-    override fun createCenterPanel(): JComponent {
-        val hint = JBLabel("<html>${message("filter.range.hint")}</html>").apply {
-            border = JBUI.Borders.emptyTop(6)
-        }
-        return FormBuilder.createFormBuilder()
-            .addLabeledComponent(message("filter.from"), fromField)
-            .addLabeledComponent(message("filter.to"), toField)
-            .addComponent(currentBranchBox)
-            .addComponent(localBranchesBox)
-            .addComponent(hint)
-            .panel.apply { preferredSize = JBUI.size(540, 170) }
-    }
-
-    override fun createLeftSideActions(): Array<Action> = arrayOf(object : DialogWrapperAction(message("filter.reset")) {
-        override fun doAction(e: ActionEvent) {
-            resetRequested = true
-            close(OK_EXIT_CODE)
-        }
-    })
-
-    private fun updateRangeControls() {
-        val enabled = !currentBranchBox.isSelected && !localBranchesBox.isSelected
-        currentBranchBox.isEnabled = !localBranchesBox.isSelected
-        localBranchesBox.isEnabled = !currentBranchBox.isSelected
-        toField.isEnabled = enabled
-    }
-
-    private fun showRevisionChooser(field: TextFieldWithBrowseButton) {
-        if (revisionNames.isEmpty()) return
-        JBPopupFactory.getInstance().createPopupChooserBuilder(revisionNames)
-            .setTitle(message("filter.choose.revision"))
-            .setItemChosenCallback { selected: String -> field.text = selected }
-            .createPopup()
-            .showUnderneathOf(field)
-    }
-}
-
-internal fun revisionFilterSuggestions(snapshot: GraphSnapshot?): List<String> = buildList {
-    add("HEAD")
-    snapshot?.refsByCommit?.values.orEmpty().asSequence().flatten().forEach { ref ->
-        add(ref.displayName)
-        add(ref.fullName)
-        add(ref.fullName.removePrefix("refs/"))
-    }
-}.distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
-
-internal fun preferredFilterFocusHash(snapshot: GraphSnapshot, filter: RevisionGraphFilter): String? {
-    filter.includedRevisions.forEach { revision ->
-        if (revision in snapshot.commitsByHash) return revision
-        snapshot.refsByCommit.forEach { (hash, refs) ->
-            if (refs.any { ref ->
-                    revision == ref.displayName || revision == ref.fullName || revision == ref.fullName.removePrefix("refs/")
-                }) return hash
-        }
-    }
-    return snapshot.head.hash?.takeIf { it in snapshot.commitsByHash } ?: snapshot.commits.firstOrNull()?.hash
-}
-
-internal data class RevisionLocatorResult(
-    val displayName: String,
-    val fullName: String,
-    val hash: String,
-    val revision: String,
-    val kind: RefKind,
-    val current: Boolean,
-)
-
-internal fun findRevisionRefs(snapshot: GraphSnapshot?, rawQuery: String): List<RevisionLocatorResult> {
-    val model = snapshot ?: return emptyList()
-    val query = rawQuery.trim().lowercase(Locale.ROOT)
-    if (query.isEmpty()) return emptyList()
-    return model.refsByCommit.values.asSequence().flatten().map { ref ->
-        RevisionLocatorResult(
-            ref.displayName,
-            ref.fullName,
-            ref.target,
-            compareRevisionName(ref) ?: ref.target,
-            ref.kind,
-            model.head.hash == ref.target && model.head.branch == ref.displayName,
-        )
-    }.filter { result ->
-        result.displayName.lowercase(Locale.ROOT).contains(query) ||
-            result.fullName.lowercase(Locale.ROOT).contains(query)
-    }.sortedWith(
-        compareBy<RevisionLocatorResult> { locatorExactRank(it, query) }
-            .thenBy { if (it.current) 0 else 1 }
-            .thenBy { locatorKindRank(it.kind) }
-            .thenBy { locatorMatchRank(it, query) }
-            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.displayName }
-            .thenBy { it.fullName },
-    ).toList()
-}
-
-internal fun cyclicLocatorIndex(size: Int, current: Int, reverse: Boolean): Int {
-    require(size > 0)
-    return if (reverse) {
-        if (current <= 0) size - 1 else current - 1
-    } else {
-        if (current < 0 || current >= size - 1) 0 else current + 1
-    }
-}
-
-private fun locatorExactRank(result: RevisionLocatorResult, query: String): Int =
-    if (result.displayName.equals(query, ignoreCase = true) || result.fullName.equals(query, ignoreCase = true)) 0 else 1
-
-private fun locatorMatchRank(result: RevisionLocatorResult, query: String): Int = when {
-    result.displayName.lowercase(Locale.ROOT).startsWith(query) -> 0
-    result.fullName.lowercase(Locale.ROOT).startsWith(query) -> 1
-    else -> 2
-}
-
-private fun locatorKindRank(kind: RefKind): Int = when (kind) {
-    RefKind.LOCAL_BRANCH -> 0
-    RefKind.REMOTE_BRANCH -> 1
-    RefKind.TAG, RefKind.ANNOTATED_TAG -> 2
-    else -> 3
-}
 
 
 internal fun shouldFocusHead(
@@ -866,285 +674,3 @@ internal fun shouldFocusHead(
     currentRoot: Path?,
     currentHead: HeadState,
 ): Boolean = currentHead.hash != null && (previousRoot != currentRoot || previousHead != currentHead)
-
-internal class RevisionCompareService(private val project: Project) {
-    private val repositoryManager = GitRepositoryManager.getInstance(project)
-
-    fun compareWithWorkspace(root: Path, selected: CompareRevision): Boolean {
-        val repository = findRepository(root) ?: return false
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.comparison"), true) {
-            private var revision = selected.hash
-            override fun run(indicator: ProgressIndicator) {
-                indicator.checkCanceled()
-                revision = verifiedRevision(repository, selected)
-            }
-            override fun onSuccess() {
-                if (!project.isDisposed) GitBrancher.getInstance(project).showDiffWithLocal(revision, listOf(repository))
-            }
-        })
-        return true
-    }
-
-    fun compareWithHead(root: Path, selected: CompareRevision): Boolean {
-        val repository = findRepository(root) ?: return false
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.comparison"), true) {
-            private var selectedRevision = selected.hash
-            private var headRevision = "HEAD"
-            override fun run(indicator: ProgressIndicator) {
-                indicator.checkCanceled()
-                selectedRevision = verifiedRevision(repository, selected)
-                indicator.checkCanceled()
-                headRevision = repository.currentBranch?.name ?: "HEAD"
-            }
-            override fun onSuccess() {
-                if (!project.isDisposed) GitBrancher.getInstance(project).showDiff(selectedRevision, headRevision, listOf(repository))
-            }
-        })
-        return true
-    }
-
-    fun compareRevisions(root: Path, base: CompareRevision, target: CompareRevision): Boolean {
-        val repository = findRepository(root) ?: return false
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.comparison"), true) {
-            private var baseRevision = base.hash
-            private var targetRevision = target.hash
-            override fun run(indicator: ProgressIndicator) {
-                indicator.checkCanceled()
-                baseRevision = verifiedRevision(repository, base)
-                indicator.checkCanceled()
-                targetRevision = verifiedRevision(repository, target)
-            }
-            override fun onSuccess() {
-                if (!project.isDisposed) GitBrancher.getInstance(project).showDiff(baseRevision, targetRevision, listOf(repository))
-            }
-        })
-        return true
-    }
-
-    private fun verifiedRevision(repository: GitRepository, selected: CompareRevision): String {
-        if (selected.revision == selected.hash) return selected.hash
-        val resolved = runCatching {
-            Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
-        }.getOrNull()
-        return if (resolved.equals(selected.hash, ignoreCase = true)) selected.revision else selected.hash
-    }
-
-    private fun findRepository(root: Path): GitRepository? {
-        val expected = root.toAbsolutePath().normalize()
-        return repositoryManager.repositories.firstOrNull { it.root.toNioPath().toAbsolutePath().normalize() == expected }
-    }
-}
-
-internal class RevisionCheckoutService(private val project: Project) {
-    private val repositoryManager = GitRepositoryManager.getInstance(project)
-    private val checkoutAction = GitCheckoutAction()
-
-    fun checkout(root: Path, selected: RevisionRef, event: AnActionEvent): Boolean {
-        val repository = findRepository(root) ?: return false
-        val reference: GitReference = (when (selected.kind) {
-            RefKind.LOCAL_BRANCH -> repository.branches.findLocalBranch(selected.displayName)
-            RefKind.REMOTE_BRANCH -> repository.branches.findRemoteBranch(selected.displayName)
-            RefKind.TAG, RefKind.ANNOTATED_TAG -> GitTag(selected.displayName)
-            else -> null
-        }) ?: return false
-        checkoutAction.actionPerformed(event, project, listOf(repository), reference)
-        return true
-    }
-
-    private fun findRepository(root: Path): GitRepository? {
-        val expected = root.toAbsolutePath().normalize()
-        return repositoryManager.repositories.firstOrNull { it.root.toNioPath().toAbsolutePath().normalize() == expected }
-    }
-}
-
-internal class RevisionLogService(private val project: Project) {
-    private val repositoryManager = GitRepositoryManager.getInstance(project)
-    private val openedTabs = mutableMapOf<LogTabKey, WeakReference<Content>>()
-    private val openingTabs = mutableSetOf<LogTabKey>()
-    private val sharedGeneration = AtomicLong()
-    private var sharedTab: SharedLogTab? = null
-
-    fun show(root: Path, selected: CompareRevision): Boolean {
-        val repository = findRepository(root) ?: return false
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.log"), true) {
-            private var commit: Hash? = null
-            private var target: RevisionLogTarget = RevisionLogTarget.Commit(selected.hash)
-
-            override fun run(indicator: ProgressIndicator) {
-                indicator.checkCanceled()
-                commit = runCatching { Git.getInstance().resolveReference(repository, selected.hash) }.getOrNull()
-                if (selected.revision != selected.hash) {
-                    indicator.checkCanceled()
-                    val namedHash = runCatching {
-                        Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
-                    }.getOrNull()
-                    target = revisionLogTarget(selected, namedHash)
-                }
-            }
-
-            override fun onSuccess() {
-                if (project.isDisposed) return
-                if (!VcsProjectLog.isAvailable(project)) return showLogUnavailable()
-                if (target is RevisionLogTarget.Reference) {
-                    val reference = (target as RevisionLogTarget.Reference).name
-                    val filters = VcsLogFilterObject.collection(
-                        VcsLogFilterObject.fromRoot(repository.root),
-                        VcsLogFilterObject.fromBranch(reference),
-                    )
-                    openOrActivateLogTab(repository, reference, filters)
-                } else {
-                    commit?.let { VcsProjectLog.showRevisionInMainLog(project, repository.root, it) }
-                        ?: showLogUnavailable()
-                }
-            }
-        })
-        return true
-    }
-
-    fun showShared(root: Path, selected: CompareRevision): Boolean {
-        val repository = findRepository(root) ?: return false
-        val requestId = sharedGeneration.incrementAndGet()
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.log"), true) {
-            private var commitExists = false
-            private var target: RevisionLogTarget = RevisionLogTarget.Commit(selected.hash)
-
-            override fun run(indicator: ProgressIndicator) {
-                indicator.checkCanceled()
-                commitExists = runCatching { Git.getInstance().resolveReference(repository, selected.hash) }.getOrNull() != null
-                if (selected.revision != selected.hash) {
-                    indicator.checkCanceled()
-                    val namedHash = runCatching {
-                        Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
-                    }.getOrNull()
-                    target = revisionLogTarget(selected, namedHash)
-                }
-            }
-
-            override fun onSuccess() {
-                if (project.isDisposed || sharedGeneration.get() != requestId) return
-                if (!VcsProjectLog.isAvailable(project) || !commitExists) return showLogUnavailable()
-                openOrUpdateSharedLogTab(filters(repository, target), requestId)
-            }
-        })
-        return true
-    }
-
-    fun showRange(root: Path, base: CompareRevision, target: CompareRevision): Boolean {
-        val repository = findRepository(root) ?: return false
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, message("task.preparing.log"), true) {
-            private var baseRevision = base.hash
-            private var targetRevision = target.hash
-
-            override fun run(indicator: ProgressIndicator) {
-                indicator.checkCanceled()
-                baseRevision = verifiedRevision(repository, base)
-                indicator.checkCanceled()
-                targetRevision = verifiedRevision(repository, target)
-            }
-
-            override fun onSuccess() {
-                if (project.isDisposed) return
-                if (!VcsProjectLog.isAvailable(project)) return showLogUnavailable()
-                val filters = VcsLogFilterObject.collection(
-                    VcsLogFilterObject.fromRoot(repository.root),
-                    VcsLogFilterObject.fromRange(baseRevision, targetRevision),
-                )
-                openOrActivateLogTab(repository, "range:${base.hash}..${target.hash}", filters)
-            }
-        })
-        return true
-    }
-
-    private fun filters(repository: GitRepository, target: RevisionLogTarget): VcsLogFilterCollection =
-        VcsLogFilterObject.collection(
-            VcsLogFilterObject.fromRoot(repository.root),
-            when (target) {
-                is RevisionLogTarget.Reference -> VcsLogFilterObject.fromBranch(target.name)
-                is RevisionLogTarget.Commit -> VcsLogFilterObject.fromHash(target.hash)
-            },
-        )
-
-    private fun openOrUpdateSharedLogTab(filters: VcsLogFilterCollection, requestId: Long) {
-        VcsProjectLog.runInMainLog(project) {
-            if (project.isDisposed || sharedGeneration.get() != requestId) return@runInMainLog
-            val existing = sharedTab
-            val existingUi = existing?.ui?.get()
-            val existingContent = existing?.content?.get()
-            if (existingUi != null && isUsable(existingContent)) {
-                existingUi.filterUi.setFilters(filters)
-                activate(existingContent)
-                return@runInMainLog
-            }
-
-            sharedTab = null
-            val ui = VcsProjectLog.getInstance(project).openLogTab(filters) ?: return@runInMainLog
-            val content = findContent(ui.mainComponent) ?: return@runInMainLog
-            sharedTab = SharedLogTab(WeakReference(ui), WeakReference(content))
-        }
-    }
-
-    private fun openOrActivateLogTab(
-        repository: GitRepository,
-        reference: String,
-        filters: VcsLogFilterCollection,
-    ) {
-        val key = LogTabKey(repository.root.path, reference)
-        if (activate(openedTabs[key]?.get())) return
-        openedTabs.remove(key)
-        if (!openingTabs.add(key)) return
-
-        VcsProjectLog.runInMainLog(project) {
-            try {
-                if (activate(openedTabs[key]?.get())) return@runInMainLog
-                val ui = VcsProjectLog.getInstance(project).openLogTab(filters) ?: return@runInMainLog
-                findContent(ui.mainComponent)?.let { openedTabs[key] = WeakReference(it) }
-            } finally {
-                openingTabs.remove(key)
-            }
-        }
-    }
-
-    private fun activate(content: Content?): Boolean {
-        if (!isUsable(content)) return false
-        val manager = content!!.manager ?: return false
-        manager.setSelectedContent(content, true)
-        ToolWindowManager.getInstance(project).getToolWindow(ToolWindowId.VCS)?.activate(null, true)
-        return true
-    }
-
-    private fun isUsable(content: Content?): Boolean {
-        if (content == null || !content.isValid) return false
-        val manager = content.manager ?: return false
-        return !manager.isDisposed
-    }
-
-    private fun findContent(component: JComponent): Content? {
-        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ToolWindowId.VCS) ?: return null
-        return toolWindow.contentManager.contents.firstOrNull { content ->
-            content.component === component || SwingUtilities.isDescendingFrom(component, content.component)
-        }
-    }
-
-    private fun showLogUnavailable() {
-        Messages.showWarningDialog(project, message("warning.log.unavailable"), message("dialog.title"))
-    }
-
-    private fun verifiedRevision(repository: GitRepository, selected: CompareRevision): String {
-        if (selected.revision == selected.hash) return selected.hash
-        val resolved = runCatching {
-            Git.getInstance().resolveReference(repository, "${selected.revision}^{commit}")?.asString()
-        }.getOrNull()
-        return if (resolved.equals(selected.hash, ignoreCase = true)) selected.revision else selected.hash
-    }
-
-    private fun findRepository(root: Path): GitRepository? {
-        val expected = root.toAbsolutePath().normalize()
-        return repositoryManager.repositories.firstOrNull { it.root.toNioPath().toAbsolutePath().normalize() == expected }
-    }
-
-    private data class LogTabKey(val root: String, val reference: String)
-    private data class SharedLogTab(
-        val ui: WeakReference<MainVcsLogUi>,
-        val content: WeakReference<Content>,
-    )
-}
