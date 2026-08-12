@@ -31,6 +31,7 @@ internal class ProcessGitCommandRunner(
         val process = try {
             ProcessBuilder(listOf(executable()) + arguments)
                 .directory(root.toFile())
+                .apply { environment()["LC_ALL"] = "C" }
                 .start()
         } catch (exception: Exception) {
             throw GitCommandException("Unable to start the configured Git executable", exception)

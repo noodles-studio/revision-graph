@@ -6,8 +6,13 @@ import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.CustomShortcutSet
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.ToggleAction
+import com.intellij.openapi.actionSystem.UiDataProvider
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.ex.DefaultCustomComponentAction
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -31,7 +36,9 @@ import io.github.noodles_studio.revisiongraph.layout.GraphLayout
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import io.github.noodles_studio.revisiongraph.model.HeadState
 import io.github.noodles_studio.revisiongraph.model.LoadResult
+import io.github.noodles_studio.revisiongraph.model.RefKind
 import io.github.noodles_studio.revisiongraph.platform.IdeaGitCommandRunner
+import io.github.noodles_studio.revisiongraph.platform.RevisionFetchAction
 import io.github.noodles_studio.revisiongraph.platform.RevisionRepositoryService
 import java.awt.BorderLayout
 import java.awt.CardLayout
@@ -48,7 +55,6 @@ import java.awt.event.KeyEvent
 import java.nio.file.Path
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
-import javax.swing.AbstractAction
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.DefaultComboBoxModel
@@ -111,6 +117,9 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         message("node.head.detached"),
     )
     private val canvas = RevisionGraphCanvas(typography)
+    private val graphContextComponent = UiDataProvider.wrapComponent(canvas, UiDataProvider { sink ->
+        sink.set(CommonDataKeys.PROJECT, project)
+    })
     private val emptyTitle = JBLabel("", SwingConstants.CENTER).apply {
         font = font.deriveFont(Font.BOLD, 15f)
         alignmentX = Component.CENTER_ALIGNMENT
@@ -190,25 +199,19 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
     private var locatorMatchIndex = -1
     private var graphFilter = RevisionGraphFilter.NONE
     private var filterFocusPending = false
-    private val refreshAction = object : DumbAwareAction(
-        message("toolbar.refresh"),
-        message("toolbar.refresh.tooltip"),
-        AllIcons.Actions.Refresh,
-    ) {
-        override fun actionPerformed(e: AnActionEvent) = refreshGraph()
-        override fun update(e: AnActionEvent) { e.presentation.isEnabled = !graphLoading }
-    }
+    private var visibleRefKinds = ALL_REFERENCE_KINDS
+    private val fetchAction = RevisionFetchAction.create()
     private val filterAction = object : ToggleAction(
         message("toolbar.filter"),
         message("toolbar.filter.tooltip"),
         AllIcons.General.Filter,
     ), DumbAware {
-        override fun isSelected(e: AnActionEvent): Boolean = graphFilter.isActive
+        override fun isSelected(e: AnActionEvent): Boolean = filtersActive()
         override fun setSelected(e: AnActionEvent, state: Boolean) = showFilterDialog()
         override fun update(e: AnActionEvent) {
             super.update(e)
             e.presentation.isEnabled = !graphLoading && currentRoot != null
-            e.presentation.description = message(if (graphFilter.isActive) "toolbar.filter.active.tooltip" else "toolbar.filter.tooltip")
+            e.presentation.description = message(if (filtersActive()) "toolbar.filter.active.tooltip" else "toolbar.filter.tooltip")
         }
     }
     private val locateHeadAction = object : DumbAwareAction(
@@ -226,22 +229,30 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
             e.presentation.description = message(if (available) "toolbar.locate.head.tooltip" else "toolbar.locate.head.unavailable")
         }
     }
-    private val refreshToolbar: ActionToolbar
+    private val graphToolbar: ActionToolbar
+    private val gitToolbar: ActionToolbar
 
     val component: JComponent
 
     init {
-        refreshToolbar = ActionManager.getInstance().createActionToolbar(
+        graphToolbar = ActionManager.getInstance().createActionToolbar(
             ActionPlaces.TOOLBAR,
             DefaultActionGroup().apply {
-                add(refreshAction)
-                addSeparator()
                 add(filterAction)
                 add(locateHeadAction)
             },
             true,
         ).apply {
-            targetComponent = canvas
+            targetComponent = graphContextComponent
+            setMiniMode(true)
+            component.isOpaque = false
+        }
+        gitToolbar = ActionManager.getInstance().createActionToolbar(
+            ActionPlaces.TOOLBAR,
+            DefaultActionGroup().apply { fetchAction?.let(::add) },
+            true,
+        ).apply {
+            targetComponent = graphContextComponent
             setMiniMode(true)
             component.isOpaque = false
         }
@@ -249,24 +260,18 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
             border = EmptyBorder(7, 10, 7, 10)
             add(JPanel(FlowLayout(FlowLayout.LEADING, 7, 0)).apply {
                 isOpaque = false
-                add(refreshToolbar.component)
                 add(rootBox)
+                add(gitToolbar.component)
                 add(toolbarStatus)
             }, BorderLayout.WEST)
-            add(JPanel(FlowLayout(FlowLayout.LEADING, 7, 0)).apply {
+            add(JPanel(FlowLayout(FlowLayout.TRAILING, 7, 0)).apply {
                 isOpaque = false
                 add(locatorField)
-            }, BorderLayout.CENTER)
-            add(JPanel(FlowLayout(FlowLayout.TRAILING, 4, 0)).apply {
-                isOpaque = false
-                add(toolbarButton("−", message("toolbar.zoom.out")) { canvas.zoomOut() })
-                add(zoomBox)
-                add(toolbarButton("+", message("toolbar.zoom.in")) { canvas.zoomIn() })
-                add(toolbarButton("1:1", message("toolbar.zoom.actual")) { canvas.setZoomPercent(100.0) })
-                add(fitButton())
+                add(graphToolbar.component)
+                add(zoomToolbar().component)
             }, BorderLayout.EAST)
         }
-        cards.add(canvas, "graph")
+        cards.add(graphContextComponent, "graph")
         cards.add(emptyState, "empty")
         cards.add(
             JPanel(BorderLayout()).apply {
@@ -300,6 +305,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
                 canvas.clearSelection()
                 clearLocator()
                 clearGraphFilter()
+                resetReferenceVisibility()
                 currentRoot = selected
                 load(false)
             }
@@ -329,15 +335,13 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         })
         retry.addActionListener { refreshGraph() }
         adjustFilterButton.addActionListener { showFilterDialog() }
-        resetFilterButton.addActionListener { applyGraphFilter(RevisionGraphFilter.NONE) }
+        resetFilterButton.addActionListener { applyFilters(RevisionGraphFilter.NONE, ALL_REFERENCE_KINDS) }
         canvas.onContextMenu = { selection, point -> contextActions.showMenu(selection, point, canvas) }
         canvas.onRevisionSelected = contextActions::showSharedLog
         canvas.onZoomChanged = ::updateZoomBox
+        canvas.setVisibleRefKinds(visibleRefKinds)
         updateZoomBox(canvas.zoomPercent())
-        component.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0), "refreshGraph")
-        component.actionMap.put("refreshGraph", object : AbstractAction() {
-            override fun actionPerformed(e: java.awt.event.ActionEvent?) { if (!graphLoading) refreshGraph() }
-        })
+        fetchAction?.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0)), component)
         repositories.subscribe(this) { changedRoot ->
             if (changedRoot == currentRoot) {
                 alarm.cancelAllRequests()
@@ -370,6 +374,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
                 canvas.clearSelection()
                 clearLocator()
                 clearGraphFilter()
+                resetReferenceVisibility()
             }
             rootBox.selectedItem = currentRoot
             rootBox.isVisible = discovered.size > 1
@@ -386,34 +391,44 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         val revisionNames = (root?.let(revisionNamesByRoot::get).orEmpty() + revisionFilterSuggestions(locatorSnapshot))
             .distinct()
             .sortedWith(String.CASE_INSENSITIVE_ORDER)
-        val dialog = RevisionGraphFilterDialog(project, graphFilter, revisionNames)
+        val dialog = RevisionGraphFilterDialog(project, graphFilter, visibleRefKinds, revisionNames)
         if (!dialog.showAndGet()) {
-            refreshToolbar.updateActionsAsync()
+            graphToolbar.updateActionsAsync()
             return
         }
-        applyGraphFilter(dialog.selectedFilter())
+        applyFilters(dialog.selectedFilter(), dialog.selectedRefKinds())
     }
 
-    private fun applyGraphFilter(selected: RevisionGraphFilter) {
-        if (selected == graphFilter) {
-            refreshToolbar.updateActionsAsync()
+    private fun applyFilters(selected: RevisionGraphFilter, selectedRefKinds: Set<RefKind>) {
+        val graphChanged = selected != graphFilter
+        val refsChanged = selectedRefKinds != visibleRefKinds
+        if (!graphChanged && !refsChanged) {
+            graphToolbar.updateActionsAsync()
             return
         }
         graphFilter = selected
+        visibleRefKinds = selectedRefKinds
+        canvas.setVisibleRefKinds(visibleRefKinds)
+        if (!graphChanged) {
+            graphToolbar.updateActionsAsync()
+            return
+        }
         filterFocusPending = true
         cache.clear()
         canvas.clearSelection()
         clearLocator()
-        refreshToolbar.updateActionsAsync()
+        graphToolbar.updateActionsAsync()
         load(true)
     }
+
+    private fun filtersActive(): Boolean = graphFilter.isActive || visibleRefKinds != ALL_REFERENCE_KINDS
 
     private fun clearGraphFilter() {
         if (graphFilter == RevisionGraphFilter.NONE) return
         graphFilter = RevisionGraphFilter.NONE
         filterFocusPending = false
         cache.clear()
-        refreshToolbar.updateActionsAsync()
+        graphToolbar.updateActionsAsync()
     }
 
     private fun repositoryDisplayName(path: Path): String {
@@ -474,15 +489,13 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         resetLocatorSearch()
     }
 
-    private fun fitButton() = JButton("${message("toolbar.fit")} ▾").apply {
-        toolTipText = message("toolbar.fit.tooltip")
-        isFocusable = false
-        margin = java.awt.Insets(2, 9, 2, 9)
-        addActionListener { showFitMenu(this) }
+    private fun resetReferenceVisibility() {
+        visibleRefKinds = ALL_REFERENCE_KINDS
+        canvas.setVisibleRefKinds(visibleRefKinds)
     }
 
-    private fun showFitMenu(anchor: JComponent) {
-        val group = DefaultActionGroup().apply {
+    private fun fitActionGroup(): DefaultActionGroup =
+        textPopupGroup(message("toolbar.fit"), message("toolbar.fit.tooltip")).apply {
             add(object : DumbAwareAction(message("toolbar.fit.graph")) {
                 override fun actionPerformed(e: AnActionEvent) = canvas.fitToView()
             })
@@ -493,12 +506,39 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
                 override fun actionPerformed(e: AnActionEvent) = canvas.fitHeight()
             })
         }
-        ActionManager.getInstance().createActionPopupMenu(ActionPlaces.POPUP, group).component.show(anchor, 0, anchor.height)
+
+    private fun zoomToolbar(): ActionToolbar = ActionManager.getInstance().createActionToolbar(
+        ActionPlaces.TOOLBAR,
+        DefaultActionGroup().apply {
+            add(textToolbarAction("−", message("toolbar.zoom.out")) { canvas.zoomOut() })
+            add(DefaultCustomComponentAction { zoomBox })
+            add(textToolbarAction("+", message("toolbar.zoom.in")) { canvas.zoomIn() })
+            add(textToolbarAction("1:1", message("toolbar.zoom.actual")) { canvas.setZoomPercent(100.0) })
+            add(fitActionGroup())
+        },
+        true,
+    ).apply {
+        targetComponent = canvas
+        setMiniMode(true)
+        component.isOpaque = false
     }
+
+    private fun textToolbarAction(text: String, description: String, action: () -> Unit) =
+        object : DumbAwareAction(text, description, null) {
+            override fun actionPerformed(e: AnActionEvent) = action()
+        }.apply {
+            templatePresentation.putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true)
+        }
+
+    private fun textPopupGroup(text: String, description: String) =
+        DefaultActionGroup(text, true).apply {
+            templatePresentation.description = description
+            templatePresentation.putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true)
+        }
 
     private fun setGraphLoading(value: Boolean) {
         graphLoading = value
-        refreshToolbar.updateActionsAsync()
+        graphToolbar.updateActionsAsync()
     }
 
     private fun load(force: Boolean) {
@@ -562,7 +602,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         locatorSnapshot = snapshot
         resetLocatorSearch()
         canvas.show(snapshot, layout, filterFocus ?: snapshot.head.hash?.takeIf { focusHead })
-        refreshToolbar.updateActionsAsync()
+        graphToolbar.updateActionsAsync()
         setToolbarStatus(null)
         if (snapshot.commits.isEmpty()) showEmptyState() else (cards.layout as CardLayout).show(cards, "graph")
     }
@@ -593,13 +633,6 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         graphIndicator?.cancel()
         cache.clear()
         revisionNamesByRoot.clear()
-    }
-
-    private fun toolbarButton(text: String, tooltip: String, action: () -> Unit) = JButton(text).apply {
-        toolTipText = tooltip
-        isFocusable = false
-        margin = java.awt.Insets(2, 9, 2, 9)
-        addActionListener { action() }
     }
 
     private fun escape(value: String) = value

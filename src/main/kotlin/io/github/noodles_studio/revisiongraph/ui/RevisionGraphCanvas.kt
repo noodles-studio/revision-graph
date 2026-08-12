@@ -5,9 +5,12 @@ import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
 import io.github.noodles_studio.revisiongraph.layout.GraphLayout
 import io.github.noodles_studio.revisiongraph.layout.NodeLayout
 import io.github.noodles_studio.revisiongraph.model.CompareRevision
+import io.github.noodles_studio.revisiongraph.model.EdgeKey
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import io.github.noodles_studio.revisiongraph.model.RefKind
 import io.github.noodles_studio.revisiongraph.model.RevisionRef
+import io.github.noodles_studio.revisiongraph.model.RevisionRelationship
+import io.github.noodles_studio.revisiongraph.model.relationship
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Cursor
@@ -44,11 +47,13 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
     private var offsetY = 22.0
     private var pendingFocusHash: String? = null
     private var selection = RevisionSelection.EMPTY
+    private var relationshipCache: RelationshipCache? = null
     private val compareRevisionsByHash = mutableMapOf<String, CompareRevision>()
     private var dragStart: Point? = null
     private var dragged = false
     private var pressedButton = MouseEvent.NOBUTTON
     private var popupHandledOnPress = false
+    private var visibleRefKinds = RefKind.entries.toSet()
 
     private val laneColors = arrayOf(
         JBColor(Color(0x397BC2), Color(0x5897D5)), JBColor(Color(0x37865A), Color(0x57A877)),
@@ -119,11 +124,14 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         val firstGraph = this.layout == null
         this.snapshot = snapshot
         this.layout = layout
+        relationshipCache = null
         selection = selection.retain(layout.byHash.keys)
         retainCompareRevisions()
+        val requestedFocus = focusHash?.takeIf(layout.byHash::containsKey)
+            ?: snapshot.head.hash?.takeIf { firstGraph && it in layout.byHash }
         when {
-            focusHash != null && focusHash in layout.byHash -> {
-                pendingFocusHash = focusHash
+            requestedFocus != null -> {
+                pendingFocusHash = requestedFocus
                 repaint()
             }
             firstGraph -> resetView()
@@ -142,6 +150,11 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         offsetX = 28.0
         offsetY = 22.0
         zoomChanged()
+        repaint()
+    }
+
+    fun setVisibleRefKinds(kinds: Set<RefKind>) {
+        visibleRefKinds = kinds
         repaint()
     }
 
@@ -235,17 +248,24 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         }
         if (width < 50 || height < 50) return
         offsetX = width / 2.0 - node.bounds.centerX * scale
-        offsetY = height / 2.0 - node.bounds.centerY * scale
+        val contentAbove = (node.bounds.centerY - graph.bounds.minY) * scale
+        offsetY = focusScreenY(height, contentAbove) - node.bounds.centerY * scale
         pendingFocusHash = null
     }
 
     private fun drawEdges(g: Graphics2D, graph: GraphLayout, visible: Rectangle2D) {
+        val relationship = relationship()
         graph.edges.forEach { edge ->
             val child = graph.byHash[edge.child] ?: return@forEach
             val parent = graph.byHash[edge.parent] ?: return@forEach
             if (!edge.points.zipWithNext().any { (from, to) -> visible.intersectsLine(from.x, from.y, to.x, to.y) } &&
                 !child.bounds.intersects(visible) && !parent.bounds.intersects(visible)) return@forEach
-            g.color = JBColor(Color(0x626A73), Color(0xA4ABB4))
+            val key = EdgeKey(edge.child, edge.parent)
+            g.color = when (key) {
+                in relationship?.basePath.orEmpty() -> SelectionMarker.BASE.color
+                in relationship?.targetPath.orEmpty() -> SelectionMarker.TARGET.color
+                else -> JBColor(Color(0x626A73), Color(0xA4ABB4))
+            }
             g.stroke = BasicStroke(1.55f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
             val path = straightPolylinePath(edge.points)
             g.draw(path)
@@ -373,9 +393,11 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
 
     private fun visualRefs(model: GraphSnapshot, hash: String): List<VisualRef> = buildList {
         if (model.head.hash == hash && model.head.detached) add(VisualRef(message("node.head.detached"), null, RefKind.OTHER, true))
-        model.refsByCommit[hash].orEmpty().forEach { ref ->
+        model.refsByCommit[hash].orEmpty().filter { ref ->
+            ref.kind in visibleRefKinds || model.head.hash == hash && model.head.branch == ref.displayName
+        }.forEach { ref ->
             val head = model.head.hash == hash && model.head.branch == ref.displayName
-            add(VisualRef(if (head) "HEAD · ${ref.displayName}" else ref.displayName, compareRevisionName(ref), ref.kind, head, ref))
+            add(VisualRef(if (head) "HEAD · ${ref.graphLabel}" else ref.graphLabel, compareRevisionName(ref), ref.kind, head, ref))
         }
     }
 
@@ -435,6 +457,13 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         val ref: RevisionRef? = null,
     )
 
+    private data class RelationshipCache(
+        val snapshot: GraphSnapshot,
+        val baseHash: String,
+        val targetHash: String,
+        val relationship: RevisionRelationship?,
+    )
+
     private fun hitTarget(point: Point): HitTarget? {
         val graph = layout ?: return null
         val model = snapshot ?: return null
@@ -449,6 +478,9 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
 
     private fun updateSelection(value: RevisionSelection, clicked: HitTarget? = null) {
         val changed = selection != value
+        if (selection.baseHash != value.baseHash || selection.targetHash != value.targetHash) {
+            relationshipCache = null
+        }
         selection = value
         if (clicked != null && (clicked.hash == value.baseHash || clicked.hash == value.targetHash)) {
             compareRevisionsByHash[clicked.hash] = CompareRevision(clicked.hash, clicked.revision)
@@ -500,6 +532,18 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         onContextMenu?.invoke(compareSelection, event.point)
     }
 
+    private fun relationship(): RevisionRelationship? {
+        val model = snapshot ?: return null
+        val base = selection.baseHash ?: return null
+        val target = selection.targetHash ?: return null
+        relationshipCache?.takeIf { cached ->
+            cached.snapshot === model && cached.baseHash == base && cached.targetHash == target
+        }?.let { return it.relationship }
+        return model.relationship(base, target).also { relationship ->
+            relationshipCache = RelationshipCache(model, base, target, relationship)
+        }
+    }
+
     private fun isContextTrigger(event: MouseEvent) = event.isPopupTrigger && SwingUtilities.isRightMouseButton(event)
 
     private fun laneColor(lane: Int) = laneColors[lane.mod(laneColors.size)]
@@ -514,3 +558,14 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         .replace("<", "&lt;")
         .replace(">", "&gt;")
 }
+
+internal fun focusScreenY(canvasHeight: Int, contentAbove: Double = 0.0): Double {
+    val preferred = min(canvasHeight / 2.0, max(MINIMUM_FOCUS_Y, canvasHeight * FOCUS_HEIGHT_RATIO))
+    val maximum = max(preferred, min(canvasHeight - MINIMUM_FOCUS_Y, canvasHeight * MAXIMUM_FOCUS_HEIGHT_RATIO))
+    return max(preferred, min(TOP_CONTENT_PADDING + contentAbove.coerceAtLeast(0.0), maximum))
+}
+
+private const val MINIMUM_FOCUS_Y = 96.0
+private const val FOCUS_HEIGHT_RATIO = .12
+private const val MAXIMUM_FOCUS_HEIGHT_RATIO = .35
+private const val TOP_CONTENT_PADDING = 24.0

@@ -1,33 +1,41 @@
 # RevisionGraph
 
+English | [简体中文](README_zh-CN.md)
+
 [![License: GPL v2 or later](https://img.shields.io/badge/License-GPL_v2_or_later-blue.svg)](LICENSE)
-[![IntelliJ Platform](https://img.shields.io/badge/IntelliJ_Platform-2025.3–2026.2-7B61FF.svg)](https://plugins.jetbrains.com/)
+[![JetBrains Marketplace](https://img.shields.io/jetbrains/plugin/v/33494.svg?label=JetBrains%20Marketplace)](https://plugins.jetbrains.com/plugin/33494-revision-graph)
 
-RevisionGraph is a native IntelliJ IDEA plugin for exploring Git history as a clear, interactive
-branch graph. It brings the tree-oriented readability of TortoiseGit's RevisionGraph to the
-IntelliJ Platform while delegating comparisons, Git Log views, and checkout operations to the
-IDE's bundled Git4Idea integration.
+RevisionGraph is a native IntelliJ IDEA plugin that presents Git relationships as a clear, compact,
+interactive graph while delegating Git interactions to the IDE's bundled Git4Idea integration.
 
-The project is under active development and supports IntelliJ IDEA 2025.3 through 2026.2.x.
-
-## Screenshots
+## Feature Demo
 
 ### Repository topology
 
-![RevisionGraph repository topology](images/revision-graph-overview.png)
+The overview keeps long-lived branches, release lines, tags, and local or remote references readable
+without expanding every commit. Local branch labels show useful upstream divergence directly in the
+graph: same-name upstreams stay implicit, while different tracked names and Ahead/Behind counts remain
+visible. IntelliJ's Git Log stays available below the graph for detailed commit history.
 
-### Revision actions
+![RevisionGraph topology with Ahead and Behind tracking status](images/revision-graph-overview.png)
 
-Open a revision's context menu to inspect its history, check out a reference, compare revisions,
-or copy reference names.
+### History and reference filtering
 
-![RevisionGraph revision context menu](images/revision-context-menu.png)
+The unified filter keeps history selection and visual reference controls in one place. Limit the
+loaded graph by revision range, current branch, or local branches, and independently show or hide
+local branches, remote branches, tags, special references, and other reference labels. Hiding a
+reference category changes only the labels—the underlying commit topology remains visible.
 
-### Revision comparison
+![RevisionGraph history and reference filter](images/revision-graph-filter.png)
 
-Select two revisions to view their commit range or open the IDE's native comparison workflow.
+### Revision relationship
 
-![RevisionGraph revision comparison](images/revision-comparison.png)
+Select two revisions to trace each side back to a common visible ancestor. The two paths use the same
+colors as their selection outlines, making the point of divergence visible without adding another
+summary panel. The selected range can still be inspected through IntelliJ's native Git Log and
+comparison workflows.
+
+![RevisionGraph dual-revision relationship paths](images/revision-graph-relationship.png)
 
 ## Why RevisionGraph?
 
@@ -42,29 +50,27 @@ stretched across the entire canvas.
 
 ## Features
 
-- Original-style layered Git branch graph with cost-minimal (`OptimalRanking`) layer assignment.
-- Local branches, remote branches, tags, HEAD, and undecorated boundary commits.
-- Complete multi-reference nodes without overlapping labels.
-- Pan, zoom, actual-size, fit-width, fit-height, and fit-entire-graph controls.
-- One-click navigation back to the current HEAD.
-- Branch and tag locator with Enter/Shift+Enter navigation.
-- Revision filtering by range, current branch, or local branches.
-- Single and dual revision selection with visually distinct outlines.
-- Native Git4Idea comparison against the working tree, HEAD, or another selected revision.
-- Native Git Log tabs for a revision or a selected revision range.
-- Checkout/switch actions and reference-name copying from the context menu.
-- Automatic refresh after repository changes without replacing the tool window.
-- English and Simplified Chinese UI.
-- Light and dark IntelliJ theme support.
-
-## Requirements
-
-- IntelliJ IDEA 2025.3 through 2026.2.x (platform builds `253`–`262`).
-- Git support enabled in the IDE.
-- A Git repository configured as a project VCS root.
-- JDK 21 or newer when building the plugin from source.
+- A compact structural view of local branches, remote branches, tags, merges, HEAD, and their
+  relationships.
+- Clear multi-reference nodes that keep labels readable without turning the graph into oversized
+  blocks.
+- At-a-glance upstream and Ahead/Behind status without repeating redundant remote branch names.
+- Matching-color path highlighting that shows how two selected revisions diverged from a common
+  visible ancestor.
+- Unified history and reference filtering that can hide labels without removing the underlying
+  commit topology.
+- Search, HEAD navigation, pan, zoom, and fit controls for exploring large repository graphs.
+- Git operations continue through familiar Git4Idea workflows, with automatic graph updates after
+  repository changes.
+- English and Simplified Chinese UI with light and dark IntelliJ theme support.
 
 ## Installation
+
+### JetBrains Marketplace
+
+Install **Revision Graph** from the
+[JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33494-revision-graph), or find it under
+**Settings | Plugins | Marketplace** inside IntelliJ IDEA.
 
 ### Build from source
 
@@ -90,12 +96,15 @@ Open RevisionGraph from the **Git** menu, the project context menu, or
 **View | Tool Windows | RevisionGraph**.
 
 - Click a node to select it and show its history in the shared Git Log tab.
-- Use <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + click to select a second node.
-- Right-click one node to compare it with the working tree or HEAD, open its history, switch to
-  its reference, or copy its reference names.
+- Use <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + click to select a second node and reveal their relationship
+  paths.
+- Right-click one node to compare it with the working tree or HEAD, open its history, switch to its
+  reference, create a branch or tag, or copy reference names.
 - Right-click a dual selection to compare the two revisions or open their range history.
+- Use the filter to limit revision history or independently hide categories of reference labels.
 - Drag an empty canvas area to pan and use the mouse wheel or toolbar controls to zoom.
 - Use the crosshair action to return to HEAD without changing zoom or selection.
+- Use **Fetch** or <kbd>F5</kbd> to invoke IntelliJ's project-level Git Fetch action.
 
 ## How it works
 
@@ -118,14 +127,11 @@ Git4Idea rather than reimplemented by this plugin.
 ## Privacy
 
 RevisionGraph does not include analytics, telemetry, advertising, or its own network service. It
-reads repository history by invoking the locally configured Git executable. Native comparisons,
-logs, and checkout operations are handled by the installed IntelliJ Git integration.
+reads repository history by invoking the locally configured Git executable. Native Fetch,
+comparisons, logs, checkout or switch operations, and reference creation are handled by the installed
+IntelliJ Git integration.
 
 ## Development
-
-The project compiles against the oldest supported platform, IntelliJ IDEA 2025.3, using a Java 21
-bytecode target. JetBrains Plugin Verifier checks the packaged plugin against 2025.3, 2026.1, and
-2026.2.
 
 Run the test suite:
 
@@ -163,6 +169,3 @@ for attribution and additional provenance details.
 - The TortoiseGit and TortoiseSVN contributors for the original RevisionGraph experience.
 - JetBrains for the IntelliJ Platform and Git4Idea integration points.
 - Built with OpenAI Codex.
-
-RevisionGraph is an independent project and is not affiliated with or endorsed by TortoiseGit,
-TortoiseSVN, JetBrains, or OpenAI. Product names and trademarks belong to their respective owners.

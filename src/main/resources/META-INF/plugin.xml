@@ -8,13 +8,12 @@
         and open focused Git Log views using the IDE's bundled Git integration.</p>
     ]]></description>
     <change-notes><![CDATA[
-        <h3>1.0.0</h3>
+        <h3>2.0.0</h3>
         <ul>
-            <li>Initial public release.</li>
-            <li>Visualize branches, tags, merges, HEAD, and repository topology.</li>
-            <li>Compare revisions, open focused Git Log views, and check out references.</li>
-            <li>Navigate large graphs with filtering, search, pan, and zoom controls.</li>
-            <li>Use the plugin in English or Simplified Chinese with light and dark themes.</li>
+            <li>Trace dual-revision fork paths using their matching selection colors.</li>
+            <li>Inspect upstream divergence and create branches or tags through native Git4Idea workflows.</li>
+            <li>Control visible reference categories without changing the loaded repository topology.</li>
+            <li>Fetch project remotes through IntelliJ's registered Git4Idea action.</li>
         </ul>
     ]]></change-notes>
     <resource-bundle>messages.RevisionGraphBundle</resource-bundle>

@@ -353,7 +353,7 @@ internal class LayeredDagLayoutEngine(
             if (detachedHeadRows == 1) add(detachedHeadLabel to true)
             addAll(refs.map { ref ->
                 val head = snapshot.head.hash == hash && snapshot.head.branch == ref.displayName
-                (if (head) "HEAD · ${ref.displayName}" else ref.displayName) to head
+                (if (head) "HEAD · ${ref.graphLabel}" else ref.graphLabel) to head
             })
         }
         val width = textMetrics.nodeWidth(labels)
