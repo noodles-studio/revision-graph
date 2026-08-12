@@ -23,7 +23,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Test and validate plugin structure
         run: ./gradlew test buildPlugin verifyPluginStructure verifyPluginProjectConfiguration
       - uses: actions/upload-artifact@v4
@@ -47,7 +47,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Verify IntelliJ ${{ matrix.ide-version }}
         run: ./gradlew verifyPlugin -PverifierIdeVersion=${{ matrix.ide-version }}
       - uses: actions/upload-artifact@v4
