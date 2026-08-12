@@ -5,13 +5,14 @@ import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.components.JBCheckBox
-import com.intellij.ui.components.JBLabel
+import com.intellij.ui.TitledSeparator
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
 import io.github.noodles_studio.revisiongraph.git.RevisionGraphFilter
 import io.github.noodles_studio.revisiongraph.git.parseRevisionList
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
+import io.github.noodles_studio.revisiongraph.model.RefKind
 import java.awt.event.ActionEvent
 import javax.swing.Action
 import javax.swing.JComponent
@@ -19,12 +20,16 @@ import javax.swing.JComponent
 internal class RevisionGraphFilterDialog(
     project: Project,
     initial: RevisionGraphFilter,
+    initialVisibleRefKinds: Set<RefKind>,
     private val revisionNames: List<String>,
 ) : DialogWrapper(project) {
     private val fromField = TextFieldWithBrowseButton()
     private val toField = TextFieldWithBrowseButton()
     private val currentBranchBox = JBCheckBox(message("filter.current.branch"), initial.currentBranchOnly)
     private val localBranchesBox = JBCheckBox(message("filter.local.branches"), initial.localBranchesOnly)
+    private val referenceBoxes = ReferenceCategory.entries.associateWith { category ->
+        JBCheckBox(message(category.messageKey), category.kinds.all { it in initialVisibleRefKinds })
+    }
     private var resetRequested = false
 
     init {
@@ -65,17 +70,23 @@ internal class RevisionGraphFilterDialog(
         )
     }
 
+    fun selectedRefKinds(): Set<RefKind> {
+        if (resetRequested) return ALL_REFERENCE_KINDS
+        return referenceBoxes.asSequence()
+            .filter { (_, box) -> box.isSelected }
+            .flatMap { (category, _) -> category.kinds.asSequence() }
+            .toSet()
+    }
+
     override fun createCenterPanel(): JComponent {
-        val hint = JBLabel("<html>${message("filter.range.hint")}</html>").apply {
-            border = JBUI.Borders.emptyTop(6)
-        }
-        return FormBuilder.createFormBuilder()
+        val form = FormBuilder.createFormBuilder()
             .addLabeledComponent(message("filter.from"), fromField)
             .addLabeledComponent(message("filter.to"), toField)
             .addComponent(currentBranchBox)
             .addComponent(localBranchesBox)
-            .addComponent(hint)
-            .panel.apply { preferredSize = JBUI.size(540, 170) }
+            .addComponent(TitledSeparator(message("filter.references")))
+        ReferenceCategory.entries.forEach { category -> form.addComponent(referenceBoxes.getValue(category)) }
+        return form.panel.apply { preferredSize = JBUI.size(540, 245) }
     }
 
     override fun createLeftSideActions(): Array<Action> = arrayOf(object : DialogWrapperAction(message("filter.reset")) {
@@ -101,6 +112,17 @@ internal class RevisionGraphFilterDialog(
             .showUnderneathOf(field)
     }
 }
+
+internal val ALL_REFERENCE_KINDS: Set<RefKind> = RefKind.entries.toSet()
+
+internal enum class ReferenceCategory(val messageKey: String, val kinds: Set<RefKind>) {
+    LOCAL("references.local", setOf(RefKind.LOCAL_BRANCH)),
+    REMOTE("references.remote", setOf(RefKind.REMOTE_BRANCH)),
+    TAGS("references.tags", setOf(RefKind.TAG, RefKind.ANNOTATED_TAG)),
+    SPECIAL("references.special", setOf(RefKind.STASH, RefKind.BISECT_GOOD, RefKind.BISECT_BAD, RefKind.BISECT_SKIP, RefKind.NOTES)),
+    OTHER("references.other", setOf(RefKind.OTHER)),
+}
+
 internal fun revisionFilterSuggestions(snapshot: GraphSnapshot?): List<String> = buildList {
     add("HEAD")
     snapshot?.refsByCommit?.values.orEmpty().asSequence().flatten().forEach { ref ->

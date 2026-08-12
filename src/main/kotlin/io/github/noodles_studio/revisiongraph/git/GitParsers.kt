@@ -24,9 +24,16 @@ object GitParsers {
             }
             val parts = line.split('\u0000')
             if (parts.size < 3) return@forEachLine
-            val (name, direct, peeled) = parts
+            val name = parts[0]
+            val direct = parts[1]
+            val peeled = parts[2]
+            val upstream = parts.getOrNull(3)?.ifBlank { null }
+            val tracking = parts.getOrNull(4).orEmpty()
             val target = peeled.ifBlank { direct }
-            if (target.isNotBlank()) add(RevisionRef(name, target, refKind(name, peeled.isNotBlank())))
+            if (target.isNotBlank()) {
+                val (ahead, behind) = parseTracking(tracking)
+                add(RevisionRef(name, target, refKind(name, peeled.isNotBlank()), upstream, ahead, behind))
+            }
         }
     }
 
@@ -42,5 +49,15 @@ object GitParsers {
         else -> RefKind.OTHER
     }
 
+    private fun parseTracking(value: String): Pair<Int, Int> {
+        var ahead = 0
+        var behind = 0
+        AHEAD_PATTERN.find(value)?.groupValues?.get(1)?.toIntOrNull()?.let { ahead = it }
+        BEHIND_PATTERN.find(value)?.groupValues?.get(1)?.toIntOrNull()?.let { behind = it }
+        return ahead to behind
+    }
+
+    private val AHEAD_PATTERN = Regex("ahead (\\d+)")
+    private val BEHIND_PATTERN = Regex("behind (\\d+)")
     private const val MAX_REF_BYTES = 16L * 1024L * 1024L
 }

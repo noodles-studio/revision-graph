@@ -56,4 +56,29 @@ class GitParsersTest {
         assertEquals(listOf(RefKind.STASH, RefKind.BISECT_GOOD, RefKind.BISECT_BAD, RefKind.BISECT_SKIP, RefKind.NOTES), refs.map { it.kind })
         assertEquals(listOf("stash", "good", "bad", "skip", "commits"), refs.map { it.displayName })
     }
+
+    @Test fun `local branch tracking status is parsed`() {
+        val hash = "f".repeat(40)
+        val input = "refs/heads/main\u0000$hash\u0000\u0000origin/main\u0000ahead 3, behind 2\u0000\n"
+        val ref = GitParsers.refs(ByteArrayInputStream(input.toByteArray())).single()
+        assertEquals("origin/main", ref.upstream)
+        assertEquals(3, ref.ahead)
+        assertEquals(2, ref.behind)
+        assertEquals("main ↑3 ↓2", ref.graphLabel)
+    }
+
+    @Test fun `different tracked branch name remains visible and zero counts are omitted`() {
+        val hash = "1".repeat(40)
+        val input = "refs/heads/release\u0000$hash\u0000\u0000origin/main\u0000\u0000\n"
+        val ref = GitParsers.refs(ByteArrayInputStream(input.toByteArray())).single()
+        assertEquals("release ↔ origin/main", ref.graphLabel)
+    }
+
+    @Test fun `branch without upstream has no remote placeholder`() {
+        val hash = "2".repeat(40)
+        val input = "refs/heads/feature\u0000$hash\u0000\u0000\u0000\u0000\n"
+        val ref = GitParsers.refs(ByteArrayInputStream(input.toByteArray())).single()
+        assertEquals("feature", ref.graphLabel)
+    }
+
 }

@@ -52,7 +52,10 @@ internal class GitClient(
         val refsFromGit = run(
             root,
             cancelled,
-            listOf("for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)%00"),
+            listOf(
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00",
+            ),
         ) { input -> GitParsers.refs(input, cancelled) }
         val valid = commits.mapTo(hashSetOf()) { it.hash }
         val refs = refsFromGit.filter { it.target in valid }

@@ -18,6 +18,18 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RevisionSelectionTest {
+    @Test fun `focused revision stays near the top while small canvases remain safe`() {
+        assertEquals(96.0, focusScreenY(800))
+        assertEquals(144.0, focusScreenY(1_200))
+        assertEquals(75.0, focusScreenY(150))
+    }
+
+    @Test fun `focused revision moves down enough to reveal content above it`() {
+        assertEquals(184.0, focusScreenY(800, contentAbove = 160.0))
+        assertEquals(280.0, focusScreenY(800, contentAbove = 500.0))
+        assertEquals(96.0, focusScreenY(800, contentAbove = -20.0))
+    }
+
     @Test fun `zoom percentage accepts presets and manual decimal input`() {
         assertEquals(125.0, parseZoomPercent("125%"))
         assertEquals(12.5, parseZoomPercent(" 12,5 % "))

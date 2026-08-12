@@ -15,6 +15,7 @@ import io.github.noodles_studio.revisiongraph.model.RevisionRef
 import io.github.noodles_studio.revisiongraph.platform.RevisionCheckoutService
 import io.github.noodles_studio.revisiongraph.platform.RevisionCompareService
 import io.github.noodles_studio.revisiongraph.platform.RevisionLogService
+import io.github.noodles_studio.revisiongraph.platform.RevisionReferenceService
 import java.awt.Point
 import java.awt.datatransfer.StringSelection
 import java.nio.file.Path
@@ -27,6 +28,7 @@ internal class RevisionGraphContextActions(
     private val comparisons = RevisionCompareService(project)
     private val checkouts = RevisionCheckoutService(project)
     private val logs = RevisionLogService(project)
+    private val references = RevisionReferenceService(project)
 
     fun showMenu(selection: RevisionCompareSelection, point: Point, canvas: RevisionGraphCanvas) {
         val base = selection.base
@@ -47,6 +49,13 @@ internal class RevisionGraphContextActions(
             })
             group.add(object : DumbAwareAction(message("menu.compare.head", base.displayName, headDisplayName(selection.head))) {
                 override fun actionPerformed(e: AnActionEvent) = compareWithHead(base)
+            })
+            group.addSeparator()
+            group.add(object : DumbAwareAction(message("menu.create.branch", selection.active.displayName)) {
+                override fun actionPerformed(e: AnActionEvent) = createBranch(selection.active)
+            })
+            group.add(object : DumbAwareAction(message("menu.create.tag", selection.active.displayName)) {
+                override fun actionPerformed(e: AnActionEvent) = createTag(selection.active)
             })
             group.addSeparator()
             val copyText = copyableRevisionText(selection.activeRefs, selection.active.hash)
@@ -104,6 +113,16 @@ internal class RevisionGraphContextActions(
     private fun checkout(ref: RevisionRef, event: AnActionEvent) {
         val root = currentRoot()
         if (root == null || !checkouts.checkout(root, ref, event)) showRepositoryUnavailable()
+    }
+
+    private fun createBranch(revision: CompareRevision) {
+        val root = currentRoot()
+        if (root == null || !references.createBranch(root, revision)) showRepositoryUnavailable()
+    }
+
+    private fun createTag(revision: CompareRevision) {
+        val root = currentRoot()
+        if (root == null || !references.createTag(root, revision)) showRepositoryUnavailable()
     }
 
     private fun checkoutLabel(ref: RevisionRef): String = when (ref.kind) {
