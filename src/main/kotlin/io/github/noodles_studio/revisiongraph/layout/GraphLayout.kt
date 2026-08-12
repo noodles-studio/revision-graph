@@ -18,8 +18,10 @@ class SpatialIndex(private val cellSize: Double, nodes: Collection<NodeLayout>) 
         .firstOrNull { it.bounds.contains(point) }
 
     private fun keys(r: Rectangle2D): Sequence<Pair<Int, Int>> = sequence {
-        val x0 = kotlin.math.floor(r.minX / cellSize).toInt(); val x1 = kotlin.math.floor(r.maxX / cellSize).toInt()
-        val y0 = kotlin.math.floor(r.minY / cellSize).toInt(); val y1 = kotlin.math.floor(r.maxY / cellSize).toInt()
+        val x0 = kotlin.math.floor(r.minX / cellSize).toInt()
+        val x1 = kotlin.math.floor(r.maxX / cellSize).toInt()
+        val y0 = kotlin.math.floor(r.minY / cellSize).toInt()
+        val y1 = kotlin.math.floor(r.maxY / cellSize).toInt()
         for (x in x0..x1) for (y in y0..y1) yield(x to y)
     }
 }

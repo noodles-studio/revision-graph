@@ -14,8 +14,14 @@ object GitParsers {
         }
     }
 
-    fun refs(input: InputStream): List<RevisionRef> = buildList {
+    fun refs(input: InputStream, cancelled: () -> Boolean = { false }): List<RevisionRef> = buildList {
+        var totalBytes = 0L
         input.bufferedReader().forEachLine { line ->
+            if (cancelled()) throw InterruptedException("Git output parsing cancelled")
+            totalBytes += line.toByteArray(Charsets.UTF_8).size + 1L
+            if (totalBytes > MAX_REF_BYTES) {
+                throw GitOutputLimitException("Git reference output exceeded $MAX_REF_BYTES bytes")
+            }
             val parts = line.split('\u0000')
             if (parts.size < 3) return@forEachLine
             val (name, direct, peeled) = parts
@@ -36,4 +42,5 @@ object GitParsers {
         else -> RefKind.OTHER
     }
 
+    private const val MAX_REF_BYTES = 16L * 1024L * 1024L
 }

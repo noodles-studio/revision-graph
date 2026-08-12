@@ -1,6 +1,5 @@
 package io.github.noodles_studio.revisiongraph.application
 
-import com.intellij.openapi.project.Project
 import io.github.noodles_studio.revisiongraph.git.GitClient
 import io.github.noodles_studio.revisiongraph.git.RevisionGraphFilter
 import io.github.noodles_studio.revisiongraph.layout.GraphLayout
@@ -17,11 +16,14 @@ internal data class RevisionGraphDocument(
 )
 
 internal class RevisionGraphLoader(
-    project: Project,
+    private val gitClient: GitClient,
     textMetrics: GraphTextMetrics,
+    detachedHeadLabel: String,
 ) {
-    private val gitClient = GitClient(project)
-    private val layoutEngine = LayeredDagLayoutEngine(textMetrics = textMetrics)
+    private val layoutEngine = LayeredDagLayoutEngine(
+        textMetrics = textMetrics,
+        detachedHeadLabel = detachedHeadLabel,
+    )
 
     fun load(
         root: Path,

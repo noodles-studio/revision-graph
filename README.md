@@ -108,12 +108,12 @@ logs, and checkout operations are handled by the installed IntelliJ Git integrat
 
 The project compiles against the oldest supported platform, IntelliJ IDEA 2025.3, using a Java 21
 bytecode target. JetBrains Plugin Verifier checks the packaged plugin against 2025.3, 2026.1, and
-2026.2. See [Architecture](docs/architecture.md) for package boundaries and compatibility policy.
+2026.2.
 
 Run the test suite:
 
 ```bash
-./gradlew test
+./gradlew verifySourceStyle test
 ```
 
 Build and verify the plugin:
@@ -130,8 +130,6 @@ Run a development IDE:
 
 Contributions and issue reports are welcome. Please keep behavior changes covered by focused unit
 tests, especially changes to Git parsing, selection rules, or graph layout.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development and pull request checklist.
 
 ## License and provenance
 

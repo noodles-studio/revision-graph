@@ -71,13 +71,18 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
                 if (SwingUtilities.isLeftMouseButton(e) || SwingUtilities.isMiddleMouseButton(e)) {
                     pendingFocusHash = null
                     pressedButton = e.button
-                    dragStart = e.point; dragged = false; cursor = Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
+                    dragStart = e.point
+                    dragged = false
+                    cursor = Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
                 }
             }
             override fun mouseDragged(e: MouseEvent) {
                 val start = dragStart ?: return
                 if (start.distance(e.point) > 2) dragged = true
-                offsetX += e.x - start.x; offsetY += e.y - start.y; dragStart = e.point; repaint()
+                offsetX += e.x - start.x
+                offsetY += e.y - start.y
+                dragStart = e.point
+                repaint()
             }
             override fun mouseReleased(e: MouseEvent) {
                 if (isContextTrigger(e)) {
@@ -88,7 +93,8 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
                     popupHandledOnPress = false
                     return
                 }
-                dragStart = null; cursor = Cursor.getDefaultCursor()
+                dragStart = null
+                cursor = Cursor.getDefaultCursor()
                 if (!dragged && pressedButton == MouseEvent.BUTTON1) {
                     val target = hitTarget(e.point)
                     updateSelection(selection.click(target?.hash, e.isControlDown || e.isMetaDown), target)
@@ -97,14 +103,22 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
                 pressedButton = MouseEvent.NOBUTTON
                 popupHandledOnPress = false
             }
-            override fun mouseMoved(e: MouseEvent) { cursor = if (hitTarget(e.point) != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor() }
+            override fun mouseMoved(e: MouseEvent) {
+                cursor = if (hitTarget(e.point) != null) {
+                    Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                } else {
+                    Cursor.getDefaultCursor()
+                }
+            }
         }
-        addMouseListener(mouse); addMouseMotionListener(mouse)
+        addMouseListener(mouse)
+        addMouseMotionListener(mouse)
     }
 
     fun show(snapshot: GraphSnapshot, layout: GraphLayout, focusHash: String? = null) {
         val firstGraph = this.layout == null
-        this.snapshot = snapshot; this.layout = layout
+        this.snapshot = snapshot
+        this.layout = layout
         selection = selection.retain(layout.byHash.keys)
         retainCompareRevisions()
         when {
@@ -122,7 +136,14 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
     fun zoomOut() = zoomAt(.84, Point(width / 2, height / 2))
     fun zoomPercent() = (scale * 100.0).roundToInt()
     fun setZoomPercent(percent: Double) = zoomAt(percent.coerceIn(12.0, 350.0) / 100.0 / scale, Point(width / 2, height / 2))
-    fun resetView() { pendingFocusHash = null; scale = 1.0; offsetX = 28.0; offsetY = 22.0; zoomChanged(); repaint() }
+    fun resetView() {
+        pendingFocusHash = null
+        scale = 1.0
+        offsetX = 28.0
+        offsetY = 22.0
+        zoomChanged()
+        repaint()
+    }
 
     fun locateRevision(hash: String, revision: String) {
         val graph = layout ?: return
@@ -149,8 +170,10 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         if (width < 50 || height < 50) return
         pendingFocusHash = null
         scale = min(1.0, min((width - 56.0) / graph.bounds.width, (height - 48.0) / graph.bounds.height)).coerceAtLeast(.12)
-        offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0); offsetY = 24.0
-        zoomChanged(); repaint()
+        offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0)
+        offsetY = 24.0
+        zoomChanged()
+        repaint()
     }
 
     fun fitWidth() {
@@ -160,7 +183,8 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         scale = min(1.0, (width - 56.0) / graph.bounds.width).coerceAtLeast(.12)
         offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0)
         offsetY = 24.0
-        zoomChanged(); repaint()
+        zoomChanged()
+        repaint()
     }
 
     fun fitHeight() {
@@ -170,15 +194,18 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         scale = min(1.0, (height - 48.0) / graph.bounds.height).coerceAtLeast(.12)
         offsetX = 28.0
         offsetY = max(24.0, (height - graph.bounds.height * scale) / 2.0)
-        zoomChanged(); repaint()
+        zoomChanged()
+        repaint()
     }
 
     private fun zoomAt(factor: Double, point: Point) {
         pendingFocusHash = null
-        val old = scale; scale = (scale * factor).coerceIn(.12, 3.5)
+        val old = scale
+        scale = (scale * factor).coerceIn(.12, 3.5)
         offsetX = point.x - (point.x - offsetX) * scale / old
         offsetY = point.y - (point.y - offsetY) * scale / old
-        zoomChanged(); repaint()
+        zoomChanged()
+        repaint()
     }
 
     private fun zoomChanged() = onZoomChanged?.invoke(zoomPercent())
@@ -191,7 +218,8 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         val g2 = (g.create() as Graphics2D).apply {
             setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
-            transform(AffineTransform.getTranslateInstance(offsetX, offsetY)); scale(scale, scale)
+            transform(AffineTransform.getTranslateInstance(offsetX, offsetY))
+            scale(scale, scale)
         }
         val visible = screenToWorld(Rectangle(0, 0, width, height))
         drawEdges(g2, graph, visible)
@@ -201,7 +229,10 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
 
     private fun applyPendingFocus(graph: GraphLayout) {
         val hash = pendingFocusHash ?: return
-        val node = graph.byHash[hash] ?: run { pendingFocusHash = null; return }
+        val node = graph.byHash[hash] ?: run {
+            pendingFocusHash = null
+            return
+        }
         if (width < 50 || height < 50) return
         offsetX = width / 2.0 - node.bounds.centerX * scale
         offsetY = height / 2.0 - node.bounds.centerY * scale
@@ -272,9 +303,11 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
 
         g.color = JBColor(Color(0xD8DCE2), Color(0x101113))
         g.fillRoundRect((b.x + 2).toInt(), (b.y + 3).toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
-        g.color = JBColor(Color.WHITE, Color(0x303236)); g.fillRoundRect(b.x.toInt(), b.y.toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
+        g.color = JBColor(Color.WHITE, Color(0x303236))
+        g.fillRoundRect(b.x.toInt(), b.y.toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
         if (refs.isEmpty()) {
-            g.color = laneColor(node.lane); g.fillRoundRect(b.x.toInt(), b.y.toInt(), 5, b.height.toInt(), 9, 9)
+            g.color = laneColor(node.lane)
+            g.fillRoundRect(b.x.toInt(), b.y.toInt(), 5, b.height.toInt(), 9, 9)
         } else {
             val oldClip = g.clip
             g.clip = java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 10.0, 10.0)
@@ -288,11 +321,13 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             g.clip = oldClip
         }
         g.color = JBColor(Color(0xC9CDD3), Color(0x4C5055))
-        g.stroke = BasicStroke(1f); g.drawRoundRect(b.x.toInt(), b.y.toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
+        g.stroke = BasicStroke(1f)
+        g.drawRoundRect(b.x.toInt(), b.y.toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
 
         if (scale > .3) {
             if (refs.isEmpty()) {
-                g.font = typography.font(true); g.color = JBColor.foreground()
+                g.font = typography.font(true)
+                g.color = JBColor.foreground()
                 val revision = commit.hash.take(8)
                 val metrics = g.fontMetrics
                 val baseline = b.centerY - metrics.height / 2.0 + metrics.ascent
@@ -474,5 +509,8 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         val p = screenToWorld(Point2D.Double(rect.x.toDouble(), rect.y.toDouble()))
         return Rectangle2D.Double(p.x, p.y, max(1.0, rect.width / scale), max(1.0, rect.height / scale))
     }
-    private fun escape(value: String) = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    private fun escape(value: String) = value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
 }

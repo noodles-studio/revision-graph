@@ -1,6 +1,5 @@
 package io.github.noodles_studio.revisiongraph.layout
 
-import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
 import io.github.noodles_studio.revisiongraph.model.CommitNode
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import java.awt.geom.Point2D
@@ -15,6 +14,7 @@ internal class LayeredDagLayoutEngine(
     private val componentGap: Double = 72.0,
     private val graphPadding: Double = 24.0,
     private val textMetrics: GraphTextMetrics = EstimatedGraphTextMetrics,
+    private val detachedHeadLabel: String = "HEAD · detached",
 ) {
     fun layout(snapshot: GraphSnapshot, cancelled: () -> Boolean = { false }): GraphLayout {
         val ordered = normalize(snapshot, cancelled)
@@ -350,7 +350,7 @@ internal class LayeredDagLayoutEngine(
         val detachedHeadRows = if (snapshot.head.hash == hash && snapshot.head.detached) 1 else 0
         val rows = refs.size + detachedHeadRows
         val labels = buildList<Pair<String, Boolean>> {
-            if (detachedHeadRows == 1) add(message("node.head.detached") to true)
+            if (detachedHeadRows == 1) add(detachedHeadLabel to true)
             addAll(refs.map { ref ->
                 val head = snapshot.head.hash == hash && snapshot.head.branch == ref.displayName
                 (if (head) "HEAD · ${ref.displayName}" else ref.displayName) to head
@@ -413,9 +413,12 @@ internal class LayeredDagLayoutEngine(
         val result = mutableListOf<CommitNode>()
         while (ready.isNotEmpty()) {
             checkCancelled(cancelled)
-            val hash = ready.remove(); val node = byHash.getValue(hash); result += node
+            val hash = ready.remove()
+            val node = byHash.getValue(hash)
+            result += node
             node.parents.filter { it in byHash }.forEach { parent ->
-                val left = incomingChildren.getValue(parent) - 1; incomingChildren[parent] = left
+                val left = incomingChildren.getValue(parent) - 1
+                incomingChildren[parent] = left
                 if (left == 0) ready += parent
             }
         }

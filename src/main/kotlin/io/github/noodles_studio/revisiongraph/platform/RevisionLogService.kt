@@ -19,7 +19,7 @@ import git4idea.repo.GitRepositoryManager
 import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
 import io.github.noodles_studio.revisiongraph.model.CompareRevision
 import io.github.noodles_studio.revisiongraph.model.RevisionLogTarget
-import io.github.noodles_studio.revisiongraph.ui.revisionLogTarget
+import io.github.noodles_studio.revisiongraph.model.revisionLogTarget
 import java.lang.ref.WeakReference
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicLong

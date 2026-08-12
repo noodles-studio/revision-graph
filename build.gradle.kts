@@ -60,4 +60,30 @@ tasks {
         from("LICENSE") { into("META-INF") }
         from("LICENSE-NOTICE.md") { into("META-INF") }
     }
+
+    val verifySourceStyle by registering {
+        group = "verification"
+        description = "Checks basic source formatting rules enforced by the project."
+        val sources = fileTree("src") {
+            include("**/*.kt", "**/*.java")
+        }
+        inputs.files(sources)
+        doLast {
+            val violations = sources.files.sortedBy { it.path }.flatMap { source ->
+                source.readLines().mapIndexedNotNull { index, line ->
+                    when {
+                        '\t' in line -> "${source.relativeTo(projectDir)}:${index + 1}: tab character"
+                        line.length > 160 -> "${source.relativeTo(projectDir)}:${index + 1}: ${line.length} columns"
+                        line != line.trimEnd() -> "${source.relativeTo(projectDir)}:${index + 1}: trailing whitespace"
+                        else -> null
+                    }
+                }
+            }
+            if (violations.isNotEmpty()) {
+                throw GradleException(violations.joinToString(prefix = "Source style violations:\n", separator = "\n"))
+            }
+        }
+    }
+
+    check { dependsOn(verifySourceStyle) }
 }

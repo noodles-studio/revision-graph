@@ -2,6 +2,7 @@ package io.github.noodles_studio.revisiongraph.ui
 
 import io.github.noodles_studio.revisiongraph.model.CompareRevision
 import io.github.noodles_studio.revisiongraph.model.RevisionLogTarget
+import io.github.noodles_studio.revisiongraph.model.revisionLogTarget
 
 import io.github.noodles_studio.revisiongraph.model.CommitNode
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot

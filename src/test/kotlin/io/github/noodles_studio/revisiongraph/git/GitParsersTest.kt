@@ -28,6 +28,13 @@ class GitParsersTest {
         assertFailsWith<IllegalArgumentException> { GitParsers.history(ByteArrayInputStream(broken)) }
     }
 
+    @Test fun `history parser rejects oversized output before retaining it`() {
+        val parser = NulRecordParser(fieldsPerRecord = 1, maxTotalBytes = 8, maxFieldBytes = 4)
+        assertFailsWith<GitOutputLimitException> {
+            parser.parse(ByteArrayInputStream("oversized\u0000".toByteArray())) { }
+        }
+    }
+
     @Test fun `annotated tag uses peeled commit`() {
         val commit = "c".repeat(40); val tagObject = "d".repeat(40)
         val input = "refs/tags/v1\u0000$tagObject\u0000$commit\u0000\nrefs/heads/main\u0000$commit\u0000\u0000\n"

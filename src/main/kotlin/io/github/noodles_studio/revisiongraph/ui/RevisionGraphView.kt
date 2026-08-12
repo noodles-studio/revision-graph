@@ -8,7 +8,6 @@ import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.ToggleAction
-import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -16,41 +15,32 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.vcs.ProjectLevelVcsManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.Alarm
 import com.intellij.util.ui.JBUI
-import git4idea.repo.GitRepository
-import git4idea.repo.GitRepositoryChangeListener
-import git4idea.repo.GitRepositoryManager
 import io.github.noodles_studio.revisiongraph.RevisionGraphBundle.message
 import io.github.noodles_studio.revisiongraph.application.RevisionGraphDocument
 import io.github.noodles_studio.revisiongraph.application.RevisionGraphLoader
+import io.github.noodles_studio.revisiongraph.git.GitClient
+import io.github.noodles_studio.revisiongraph.git.GitClientText
 import io.github.noodles_studio.revisiongraph.git.RevisionGraphFilter
 import io.github.noodles_studio.revisiongraph.layout.GraphLayout
-import io.github.noodles_studio.revisiongraph.model.CompareRevision
 import io.github.noodles_studio.revisiongraph.model.GraphSnapshot
 import io.github.noodles_studio.revisiongraph.model.HeadState
 import io.github.noodles_studio.revisiongraph.model.LoadResult
-import io.github.noodles_studio.revisiongraph.model.RefKind
-import io.github.noodles_studio.revisiongraph.model.RevisionRef
-import io.github.noodles_studio.revisiongraph.platform.RevisionCheckoutService
-import io.github.noodles_studio.revisiongraph.platform.RevisionCompareService
-import io.github.noodles_studio.revisiongraph.platform.RevisionLogService
+import io.github.noodles_studio.revisiongraph.platform.IdeaGitCommandRunner
+import io.github.noodles_studio.revisiongraph.platform.RevisionRepositoryService
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
 import java.awt.Component
-import java.awt.datatransfer.StringSelection
 import java.awt.Dimension
 import java.awt.Font
 import java.awt.FlowLayout
 import java.awt.GridBagLayout
-import java.awt.Point
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.event.KeyAdapter
@@ -77,9 +67,8 @@ import javax.swing.event.DocumentListener
 
 
 internal class RevisionGraphView(private val project: Project) : Disposable {
-    private val comparisons = RevisionCompareService(project)
-    private val checkouts = RevisionCheckoutService(project)
-    private val logs = RevisionLogService(project)
+    private val repositories = RevisionRepositoryService(project)
+    private val contextActions = RevisionGraphContextActions(project) { currentRoot }
     private val generation = AtomicLong()
     private val cache = mutableMapOf<Path, RevisionGraphDocument>()
     private val revisionNamesByRoot = mutableMapOf<Path, List<String>>()
@@ -107,7 +96,20 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
     private val status = JBLabel(message("status.loading"), SwingConstants.CENTER)
     private val retry = JButton(message("status.retry"))
     private val typography = GraphTypography.fromIdeaDefaults()
-    private val loader = RevisionGraphLoader(project, typography)
+    private val loader = RevisionGraphLoader(
+        GitClient(
+            IdeaGitCommandRunner(project),
+            GitClientText(
+                repositoryEmpty = message("git.repository.empty"),
+                filterEmpty = message("git.filter.empty"),
+                commandFailed = message("git.command.failed"),
+                historyParseFailed = message("git.history.parse.failed"),
+                outputTooLarge = message("git.output.too.large"),
+            ),
+        ),
+        typography,
+        message("node.head.detached"),
+    )
     private val canvas = RevisionGraphCanvas(typography)
     private val emptyTitle = JBLabel("", SwingConstants.CENTER).apply {
         font = font.deriveFont(Font.BOLD, 15f)
@@ -247,7 +249,8 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
             border = EmptyBorder(7, 10, 7, 10)
             add(JPanel(FlowLayout(FlowLayout.LEADING, 7, 0)).apply {
                 isOpaque = false
-                add(refreshToolbar.component); add(rootBox)
+                add(refreshToolbar.component)
+                add(rootBox)
                 add(toolbarStatus)
             }, BorderLayout.WEST)
             add(JPanel(FlowLayout(FlowLayout.LEADING, 7, 0)).apply {
@@ -265,10 +268,25 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         }
         cards.add(canvas, "graph")
         cards.add(emptyState, "empty")
-        cards.add(JPanel(BorderLayout()).apply { add(status, BorderLayout.CENTER); add(JPanel().apply { add(retry) }, BorderLayout.SOUTH) }, "status")
-        component = JPanel(BorderLayout()).apply { add(toolbar, BorderLayout.NORTH); add(graphArea, BorderLayout.CENTER) }
+        cards.add(
+            JPanel(BorderLayout()).apply {
+                add(status, BorderLayout.CENTER)
+                add(JPanel().apply { add(retry) }, BorderLayout.SOUTH)
+            },
+            "status",
+        )
+        component = JPanel(BorderLayout()).apply {
+            add(toolbar, BorderLayout.NORTH)
+            add(graphArea, BorderLayout.CENTER)
+        }
         rootBox.renderer = object : DefaultListCellRenderer() {
-            override fun getListCellRendererComponent(list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean): java.awt.Component {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean,
+            ): java.awt.Component {
                 val path = value as? Path
                 return super.getListCellRendererComponent(list, path?.let(::repositoryDisplayName) ?: value, index, isSelected, cellHasFocus).also {
                     (it as? JComponent)?.toolTipText = path?.toString()
@@ -312,19 +330,20 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         retry.addActionListener { refreshGraph() }
         adjustFilterButton.addActionListener { showFilterDialog() }
         resetFilterButton.addActionListener { applyGraphFilter(RevisionGraphFilter.NONE) }
-        canvas.onContextMenu = ::showContextMenu
-        canvas.onRevisionSelected = ::showSharedLog
+        canvas.onContextMenu = { selection, point -> contextActions.showMenu(selection, point, canvas) }
+        canvas.onRevisionSelected = contextActions::showSharedLog
         canvas.onZoomChanged = ::updateZoomBox
         updateZoomBox(canvas.zoomPercent())
         component.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0), "refreshGraph")
         component.actionMap.put("refreshGraph", object : AbstractAction() {
             override fun actionPerformed(e: java.awt.event.ActionEvent?) { if (!graphLoading) refreshGraph() }
         })
-        project.messageBus.connect(this).subscribe(GitRepository.GIT_REPO_CHANGE, GitRepositoryChangeListener { repository ->
-            if (repository.root.toNioPath() == currentRoot) {
-                alarm.cancelAllRequests(); alarm.addRequest({ if (component.isShowing) load(true) }, 500)
+        repositories.subscribe(this) { changedRoot ->
+            if (changedRoot == currentRoot) {
+                alarm.cancelAllRequests()
+                alarm.addRequest({ if (component.isShowing) load(true) }, 500)
             }
-        })
+        }
         refreshRoots()
         if (roots.isEmpty()) {
             showStatus(message("status.waiting.repositories"), true)
@@ -336,11 +355,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
     }
 
     private fun refreshRoots() {
-        val repositoryRoots = GitRepositoryManager.getInstance(project).repositories.map { it.root.toNioPath() }
-        val mappedRoots = ProjectLevelVcsManager.getInstance(project).getAllVcsRoots().asSequence()
-            .filter { it.vcs?.name.equals("Git", ignoreCase = true) }
-            .map { it.path.toNioPath() }
-        val discovered = (repositoryRoots.asSequence() + mappedRoots).distinct().sortedBy(Path::toString).toList()
+        val discovered = repositories.roots()
         if (discovered == roots) {
             rootBox.isVisible = discovered.size > 1
             return
@@ -489,12 +504,18 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
     private fun load(force: Boolean) {
         if (currentRoot == null) refreshRoots()
         val root = currentRoot ?: run {
-            generation.incrementAndGet(); graphIndicator?.cancel(); setGraphLoading(false)
+            generation.incrementAndGet()
+            graphIndicator?.cancel()
+            setGraphLoading(false)
             return showStatus(message("status.no.selected.repository"), true)
         }
-        val id = generation.incrementAndGet(); graphIndicator?.cancel()
+        val id = generation.incrementAndGet()
+        graphIndicator?.cancel()
         val requestedFilter = graphFilter
-        if (!force) cache[root]?.let { document -> publish(document.snapshot, document.layout); return }
+        if (!force) cache[root]?.let { document ->
+            publish(document.snapshot, document.layout)
+            return
+        }
         val keepGraphVisible = publishedRoot == root && cache[root] != null
         setGraphLoading(true)
         if (keepGraphVisible) setToolbarStatus(message("status.refreshing.graph"))
@@ -549,7 +570,8 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
     private fun showEmptyState() {
         val filtered = graphFilter.isActive
         emptyTitle.text = message(if (filtered) "empty.filter.title" else "empty.repository.title")
-        emptyDescription.text = "<html><div style='text-align:center'>${message(if (filtered) "empty.filter.description" else "empty.repository.description")}</div></html>"
+        val descriptionKey = if (filtered) "empty.filter.description" else "empty.repository.description"
+        emptyDescription.text = "<html><div style='text-align:center'>${message(descriptionKey)}</div></html>"
         emptyActions.isVisible = filtered
         (cards.layout as CardLayout).show(cards, "empty")
     }
@@ -561,101 +583,29 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
 
     private fun showStatus(text: String, canRetry: Boolean) {
         setToolbarStatus(null)
-        status.text = "<html><div style='text-align:center'>${escape(text)}</div></html>"; retry.isVisible = canRetry
+        status.text = "<html><div style='text-align:center'>${escape(text)}</div></html>"
+        retry.isVisible = canRetry
         (cards.layout as CardLayout).show(cards, "status")
     }
 
-    private fun showContextMenu(selection: RevisionCompareSelection, point: Point) {
-        val base = selection.base
-        val group = DefaultActionGroup()
-        val target = selection.target
-        if (target == null) {
-            group.add(object : DumbAwareAction(message("menu.show.history", selection.active.displayName)) {
-                override fun actionPerformed(e: AnActionEvent) = showLog(selection.active)
-            })
-            selection.activeRef?.takeIf { checkoutAvailable(it, selection.head) }?.let { ref ->
-                group.add(object : DumbAwareAction(checkoutLabel(ref)) {
-                    override fun actionPerformed(e: AnActionEvent) = checkout(ref, e)
-                })
-            }
-            group.addSeparator()
-            group.add(object : DumbAwareAction(message("menu.compare.workspace", base.displayName)) {
-                override fun actionPerformed(e: AnActionEvent) = compareWithWorkspace(base)
-            })
-            group.add(object : DumbAwareAction(message("menu.compare.head", base.displayName, headDisplayName(selection.head))) {
-                override fun actionPerformed(e: AnActionEvent) = compareWithHead(base)
-            })
-            group.addSeparator()
-            val copyText = copyableRevisionText(selection.activeRefs, selection.active.hash)
-            val copyMessage = if (selection.activeRefs.isEmpty()) "menu.copy.hash" else "menu.copy.refs"
-            group.add(object : DumbAwareAction(message(copyMessage)) {
-                override fun actionPerformed(e: AnActionEvent) {
-                    CopyPasteManager.getInstance().setContents(StringSelection(copyText))
-                }
-            })
-        } else {
-            group.add(object : DumbAwareAction(message("menu.show.range", base.displayName, target.displayName)) {
-                override fun actionPerformed(e: AnActionEvent) = showLogRange(base, target)
-            })
-            group.addSeparator()
-            group.add(object : DumbAwareAction(message("menu.compare.revisions", base.displayName, target.displayName)) {
-                override fun actionPerformed(e: AnActionEvent) = compareRevisions(base, target)
-            })
-        }
-        ActionManager.getInstance().createActionPopupMenu(ActionPlaces.POPUP, group).component.show(canvas, point.x, point.y)
+    override fun dispose() {
+        generation.incrementAndGet()
+        graphIndicator?.cancel()
+        cache.clear()
+        revisionNamesByRoot.clear()
     }
 
-    private fun showLog(revision: CompareRevision) {
-        val root = currentRoot
-        if (root == null || !logs.show(root, revision)) showRepositoryUnavailable()
-    }
-
-    private fun showSharedLog(revision: CompareRevision) {
-        val root = currentRoot
-        if (root == null || !logs.showShared(root, revision)) showRepositoryUnavailable()
-    }
-
-    private fun showLogRange(base: CompareRevision, target: CompareRevision) {
-        val root = currentRoot
-        if (root == null || !logs.showRange(root, base, target)) showRepositoryUnavailable()
-    }
-
-    private fun compareWithWorkspace(revision: CompareRevision) {
-        val root = currentRoot
-        if (root == null || !comparisons.compareWithWorkspace(root, revision)) showRepositoryUnavailable()
-    }
-
-    private fun compareWithHead(revision: CompareRevision) {
-        val root = currentRoot
-        if (root == null || !comparisons.compareWithHead(root, revision)) showRepositoryUnavailable()
-    }
-
-    private fun compareRevisions(base: CompareRevision, target: CompareRevision) {
-        val root = currentRoot
-        if (root == null || !comparisons.compareRevisions(root, base, target)) showRepositoryUnavailable()
-    }
-
-    private fun checkout(ref: RevisionRef, event: AnActionEvent) {
-        val root = currentRoot
-        if (root == null || !checkouts.checkout(root, ref, event)) showRepositoryUnavailable()
-    }
-
-    private fun checkoutLabel(ref: RevisionRef): String = when (ref.kind) {
-        RefKind.LOCAL_BRANCH -> message("menu.switch.branch", ref.displayName)
-        RefKind.REMOTE_BRANCH -> message("menu.checkout.remote", ref.displayName)
-        RefKind.TAG, RefKind.ANNOTATED_TAG -> message("menu.checkout.tag", ref.displayName)
-        else -> message("menu.checkout.ref", ref.displayName)
-    }
-
-    private fun showRepositoryUnavailable() {
-        Messages.showWarningDialog(project, message("warning.repository.unavailable"), message("dialog.title"))
-    }
-
-    override fun dispose() { generation.incrementAndGet(); graphIndicator?.cancel(); cache.clear(); revisionNamesByRoot.clear() }
     private fun toolbarButton(text: String, tooltip: String, action: () -> Unit) = JButton(text).apply {
-        toolTipText = tooltip; isFocusable = false; margin = java.awt.Insets(2, 9, 2, 9); addActionListener { action() }
+        toolTipText = tooltip
+        isFocusable = false
+        margin = java.awt.Insets(2, 9, 2, 9)
+        addActionListener { action() }
     }
-    private fun escape(value: String) = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    private fun escape(value: String) = value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
 }
 
 internal fun parseZoomPercent(value: Any?): Double? = value?.toString()
