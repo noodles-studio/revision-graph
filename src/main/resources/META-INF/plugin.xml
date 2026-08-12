@@ -1,0 +1,41 @@
+<idea-plugin>
+    <id>io.github.noodles_studio.revisiongraph</id>
+    <name>Revision Graph</name>
+    <vendor url="https://github.com/noodles-studio">Noodles Studio</vendor>
+    <description><![CDATA[
+        <p>An interactive, native IntelliJ revision graph backed by Git.</p>
+        <p>Explore branches, tags, merges, and repository topology; compare or check out revisions;
+        and open focused Git Log views using the IDE's bundled Git integration.</p>
+    ]]></description>
+    <change-notes><![CDATA[
+        <h3>1.0.0</h3>
+        <ul>
+            <li>Initial public release.</li>
+            <li>Visualize branches, tags, merges, HEAD, and repository topology.</li>
+            <li>Compare revisions, open focused Git Log views, and check out references.</li>
+            <li>Navigate large graphs with filtering, search, pan, and zoom controls.</li>
+            <li>Use the plugin in English or Simplified Chinese with light and dark themes.</li>
+        </ul>
+    ]]></change-notes>
+    <resource-bundle>messages.RevisionGraphBundle</resource-bundle>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.vcs</depends>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Revision Graph" anchor="right"
+                    icon="io.github.noodles_studio.revisiongraph.icons.RevisionGraphIcons.ToolWindow"
+                    factoryClass="io.github.noodles_studio.revisiongraph.ui.RevisionGraphToolWindowFactory"
+                    canCloseContents="false"/>
+    </extensions>
+
+    <actions>
+        <action id="io.github.noodles_studio.revisiongraph.Open"
+                class="io.github.noodles_studio.revisiongraph.ui.OpenRevisionGraphAction"
+                icon="io.github.noodles_studio.revisiongraph.icons.RevisionGraphIcons.ToolWindow"
+                text="%action.open.text" description="%action.open.description">
+            <add-to-group group-id="Git.Menu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
