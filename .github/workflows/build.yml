@@ -26,7 +26,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
       - name: Test and validate plugin structure
         run: ./gradlew verifySourceStyle test buildPlugin verifyPluginStructure verifyPluginProjectConfiguration
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: revision-graph-plugin
           path: build/distributions/*.zip
@@ -50,7 +50,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
       - name: Verify IntelliJ ${{ matrix.ide-version }}
         run: ./gradlew verifyPlugin -PverifierIdeVersion=${{ matrix.ide-version }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: plugin-verifier-${{ matrix.ide-version }}
