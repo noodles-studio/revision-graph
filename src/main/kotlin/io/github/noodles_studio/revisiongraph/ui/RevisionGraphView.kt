@@ -20,7 +20,6 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
-import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBLabel
@@ -61,6 +60,7 @@ import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JLayer
 import javax.swing.JLayeredPane
 import javax.swing.JList
 import javax.swing.JPanel
@@ -176,14 +176,19 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
 
         override fun doLayout() {
             cards.setBounds(0, 0, width, height)
-            val size = watermark.preferredSize
+            val watermarkSize = watermark.preferredSize
             watermark.setBounds(
-                (width - size.width - JBUI.scale(12)).coerceAtLeast(0),
-                (height - size.height - JBUI.scale(10)).coerceAtLeast(0),
-                size.width,
-                size.height,
+                (width - watermarkSize.width - JBUI.scale(12)).coerceAtLeast(0),
+                (height - watermarkSize.height - JBUI.scale(10)).coerceAtLeast(0),
+                watermarkSize.width,
+                watermarkSize.height,
             )
         }
+    }
+    private val legendOverlay = RevisionGraphLegendOverlay()
+    private val graphLayer = JLayer<JComponent>(graphArea).apply {
+        glassPane = legendOverlay
+        legendOverlay.isVisible = true
     }
     private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var currentRoot: Path? = null
@@ -228,6 +233,19 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
             e.presentation.isEnabled = available
             e.presentation.description = message(if (available) "toolbar.locate.head.tooltip" else "toolbar.locate.head.unavailable")
         }
+    }
+    private val legendAction = object : ToggleAction(
+        message("toolbar.legend"),
+        message("toolbar.legend.tooltip"),
+        null,
+    ), DumbAware {
+        override fun isSelected(e: AnActionEvent): Boolean = legendOverlay.legendVisible
+
+        override fun setSelected(e: AnActionEvent, state: Boolean) {
+            legendOverlay.legendVisible = state
+        }
+    }.apply {
+        templatePresentation.putClientProperty(ActionUtil.SHOW_TEXT_IN_TOOLBAR, true)
     }
     private val graphToolbar: ActionToolbar
     private val gitToolbar: ActionToolbar
@@ -282,7 +300,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         )
         component = JPanel(BorderLayout()).apply {
             add(toolbar, BorderLayout.NORTH)
-            add(graphArea, BorderLayout.CENTER)
+            add(graphLayer, BorderLayout.CENTER)
         }
         rootBox.renderer = object : DefaultListCellRenderer() {
             override fun getListCellRendererComponent(
@@ -515,6 +533,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
             add(textToolbarAction("+", message("toolbar.zoom.in")) { canvas.zoomIn() })
             add(textToolbarAction("1:1", message("toolbar.zoom.actual")) { canvas.setZoomPercent(100.0) })
             add(fitActionGroup())
+            add(legendAction)
         },
         true,
     ).apply {
