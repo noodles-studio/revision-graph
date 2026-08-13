@@ -324,22 +324,33 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
 
         g.color = JBColor(Color(0xD8DCE2), Color(0x101113))
         g.fillRoundRect((b.x + 2).toInt(), (b.y + 3).toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
-        g.color = JBColor(Color.WHITE, Color(0x303236))
-        g.fillRoundRect(b.x.toInt(), b.y.toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
         if (refs.isEmpty()) {
+            g.color = JBColor(Color.WHITE, Color(0x303236))
+            g.fillRoundRect(b.x.toInt(), b.y.toInt(), b.width.toInt(), b.height.toInt(), 10, 10)
             g.color = laneColor(node.lane)
             g.fillRoundRect(b.x.toInt(), b.y.toInt(), 5, b.height.toInt(), 9, 9)
         } else {
-            val oldClip = g.clip
-            g.clip(java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 10.0, 10.0))
             val rowHeight = b.height / refs.size
+            val rowShape = Path2D.Double()
             refs.forEachIndexed { index, ref ->
+                val rowTop = b.y + index * rowHeight
+                val rowBottom = b.y + (index + 1) * rowHeight
+                setReferenceRowShape(rowShape, b, rowTop, rowBottom, index == 0, index == refs.lastIndex, b.maxX, true)
                 g.color = RevisionGraphColors.refBackground(ref.kind, ref.head)
-                g.fillRect(b.x.toInt(), (b.y + index * rowHeight).toInt(), b.width.toInt(), kotlin.math.ceil(rowHeight).toInt())
+                g.fill(rowShape)
+                setReferenceRowShape(
+                    rowShape,
+                    b,
+                    rowTop,
+                    rowBottom,
+                    index == 0,
+                    index == refs.lastIndex,
+                    b.x + REFERENCE_ACCENT_WIDTH,
+                    false,
+                )
                 g.color = RevisionGraphColors.refAccent(ref.kind, ref.head)
-                g.fillRect(b.x.toInt(), (b.y + index * rowHeight).toInt(), 5, kotlin.math.ceil(rowHeight).toInt())
+                g.fill(rowShape)
             }
-            g.clip = oldClip
         }
         g.color = JBColor(Color(0xC9CDD3), Color(0x4C5055))
         g.stroke = BasicStroke(1f)
@@ -369,6 +380,75 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             }
         }
         marker?.let { drawSelectionMarker(g, b, it) }
+    }
+
+    private fun setReferenceRowShape(
+        path: Path2D.Double,
+        bounds: Rectangle2D.Double,
+        rowTop: Double,
+        rowBottom: Double,
+        first: Boolean,
+        last: Boolean,
+        right: Double,
+        roundRight: Boolean,
+    ) {
+        val left = bounds.x
+        val radius = NODE_CORNER_RADIUS
+        val control = radius * CIRCLE_CONTROL
+        path.reset()
+        if (first) {
+            path.moveTo(left + radius, bounds.y)
+            if (roundRight) {
+                path.lineTo(right - radius, bounds.y)
+                path.curveTo(
+                    right - radius + control,
+                    bounds.y,
+                    right,
+                    bounds.y + radius - control,
+                    right,
+                    bounds.y + radius,
+                )
+            } else {
+                path.lineTo(right, bounds.y)
+            }
+        } else {
+            path.moveTo(left, rowTop)
+            path.lineTo(right, rowTop)
+        }
+        if (last) {
+            if (roundRight) {
+                path.lineTo(right, bounds.maxY - radius)
+                path.curveTo(
+                    right,
+                    bounds.maxY - radius + control,
+                    right - radius + control,
+                    bounds.maxY,
+                    right - radius,
+                    bounds.maxY,
+                )
+            } else {
+                path.lineTo(right, bounds.maxY)
+            }
+            path.lineTo(left + radius, bounds.maxY)
+            path.curveTo(
+                left + radius - control,
+                bounds.maxY,
+                left,
+                bounds.maxY - radius + control,
+                left,
+                bounds.maxY - radius,
+            )
+        } else {
+            path.lineTo(right, rowBottom)
+            path.lineTo(left, rowBottom)
+        }
+        if (first) {
+            path.lineTo(left, bounds.y + radius)
+            path.curveTo(left, bounds.y + radius - control, left + radius - control, bounds.y, left + radius, bounds.y)
+        } else {
+            path.lineTo(left, rowTop)
+        }
+        path.closePath()
     }
 
     private data class VisualRef(
@@ -537,3 +617,6 @@ private const val MINIMUM_FOCUS_Y = 96.0
 private const val FOCUS_HEIGHT_RATIO = .12
 private const val MAXIMUM_FOCUS_HEIGHT_RATIO = .35
 private const val TOP_CONTENT_PADDING = 24.0
+private const val NODE_CORNER_RADIUS = 5.0
+private const val REFERENCE_ACCENT_WIDTH = 5.0
+private const val CIRCLE_CONTROL = 0.5522847498307936
