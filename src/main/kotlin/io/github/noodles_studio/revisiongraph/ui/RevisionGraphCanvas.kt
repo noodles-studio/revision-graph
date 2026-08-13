@@ -261,12 +261,13 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             if (!edge.points.zipWithNext().any { (from, to) -> visible.intersectsLine(from.x, from.y, to.x, to.y) } &&
                 !child.bounds.intersects(visible) && !parent.bounds.intersects(visible)) return@forEach
             val key = EdgeKey(edge.child, edge.parent)
-            g.color = when (key) {
-                in relationship?.basePath.orEmpty() -> SelectionMarker.BASE.color
-                in relationship?.targetPath.orEmpty() -> SelectionMarker.TARGET.color
-                else -> JBColor(Color(0x626A73), Color(0xA4ABB4))
+            val style = when (key) {
+                in relationship?.basePath.orEmpty() -> GraphPathStyle.BASE
+                in relationship?.targetPath.orEmpty() -> GraphPathStyle.TARGET
+                else -> GraphPathStyle.PARENT
             }
-            g.stroke = BasicStroke(1.55f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g.color = style.color
+            g.stroke = style.stroke()
             val path = straightPolylinePath(edge.points)
             g.draw(path)
             drawArrow(g, edge.points)
@@ -330,12 +331,12 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             g.fillRoundRect(b.x.toInt(), b.y.toInt(), 5, b.height.toInt(), 9, 9)
         } else {
             val oldClip = g.clip
-            g.clip = java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 10.0, 10.0)
+            g.clip(java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 10.0, 10.0))
             val rowHeight = b.height / refs.size
             refs.forEachIndexed { index, ref ->
-                g.color = refBackground(ref.kind, ref.head)
+                g.color = RevisionGraphColors.refBackground(ref.kind, ref.head)
                 g.fillRect(b.x.toInt(), (b.y + index * rowHeight).toInt(), b.width.toInt(), kotlin.math.ceil(rowHeight).toInt())
-                g.color = refAccent(ref.kind, ref.head)
+                g.color = RevisionGraphColors.refAccent(ref.kind, ref.head)
                 g.fillRect(b.x.toInt(), (b.y + index * rowHeight).toInt(), 5, kotlin.math.ceil(rowHeight).toInt())
             }
             g.clip = oldClip
@@ -356,7 +357,7 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
                 val rowHeight = b.height / refs.size
                 refs.forEachIndexed { index, ref ->
                     g.font = typography.font(ref.head)
-                    g.color = refText(ref.kind, ref.head)
+                    g.color = RevisionGraphColors.refText(ref.kind, ref.head)
                     val metrics = g.fontMetrics
                     val baseline = b.y + index * rowHeight + (rowHeight - metrics.height) / 2.0 + metrics.ascent
                     g.drawString(ref.text, graphTextLeft(b.x), baseline.toFloat())
@@ -379,8 +380,8 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
     )
 
     private enum class SelectionMarker(val color: JBColor) {
-        BASE(JBColor(Color(0x1E6FB8), Color(0x65B3F3))),
-        TARGET(JBColor(Color(0x8A2638), Color(0xE06C75))),
+        BASE(RevisionGraphColors.baseSelection),
+        TARGET(RevisionGraphColors.targetSelection),
     }
 
     private fun drawSelectionMarker(g: Graphics2D, bounds: Rectangle2D.Double, marker: SelectionMarker) {
@@ -399,39 +400,6 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             val head = model.head.hash == hash && model.head.branch == ref.displayName
             add(VisualRef(if (head) "HEAD · ${ref.graphLabel}" else ref.graphLabel, compareRevisionName(ref), ref.kind, head, ref))
         }
-    }
-
-    private fun refBackground(kind: RefKind, current: Boolean) = when {
-        current -> JBColor(Color(0xDCEEFF), Color(0x1C3A55))
-        kind == RefKind.LOCAL_BRANCH -> JBColor(Color(0xDFF5EB), Color(0x1B3D32))
-        kind == RefKind.REMOTE_BRANCH -> JBColor(Color(0xEEE6F8), Color(0x493B59))
-        kind == RefKind.TAG || kind == RefKind.ANNOTATED_TAG -> JBColor(Color(0xFFF2CC), Color(0x554A2C))
-        kind == RefKind.STASH -> JBColor(Color(0xF7E1F8), Color(0x533B58))
-        kind == RefKind.BISECT_GOOD -> JBColor(Color(0xDDF2E1), Color(0x2E4D35))
-        kind == RefKind.BISECT_BAD || kind == RefKind.BISECT_SKIP -> JBColor(Color(0xF7DFDF), Color(0x573535))
-        kind == RefKind.NOTES -> JBColor(Color(0xE0F1F3), Color(0x304E53))
-        else -> JBColor(Color(0xECEEF1), Color(0x3D4044))
-    }
-    private fun refAccent(kind: RefKind, current: Boolean) = when {
-        current -> JBColor(Color(0x2376BD), Color(0x65B3F3))
-        kind == RefKind.LOCAL_BRANCH -> JBColor(Color(0x25815E), Color(0x59C89A))
-        kind == RefKind.REMOTE_BRANCH -> JBColor(Color(0x7B5CAD), Color(0xB493D6))
-        kind == RefKind.TAG || kind == RefKind.ANNOTATED_TAG -> JBColor(Color(0xA77B13), Color(0xE1C162))
-        kind == RefKind.STASH -> JBColor(Color(0xA857AE), Color(0xDA91DE))
-        kind == RefKind.BISECT_GOOD -> JBColor(Color(0x32884C), Color(0x72C58B))
-        kind == RefKind.BISECT_BAD || kind == RefKind.BISECT_SKIP -> JBColor(Color(0xB84747), Color(0xDF7979))
-        kind == RefKind.NOTES -> JBColor(Color(0x378892), Color(0x75C2CA))
-        else -> JBColor(Color(0x68717B), Color(0xA8AFB7))
-    }
-    private fun refText(kind: RefKind, current: Boolean) = if (current) JBColor(Color(0x125A95), Color(0xC2E3FF)) else when (kind) {
-        RefKind.LOCAL_BRANCH -> JBColor(Color(0x176447), Color(0xA9E8CA))
-        RefKind.REMOTE_BRANCH -> JBColor(Color(0x65458C), Color(0xD5BCEB))
-        RefKind.TAG, RefKind.ANNOTATED_TAG -> JBColor(Color(0x765A12), Color(0xF1D98B))
-        RefKind.STASH -> JBColor(Color(0x773D7B), Color(0xEDB8F0))
-        RefKind.BISECT_GOOD -> JBColor(Color(0x216537), Color(0xAEE4BB))
-        RefKind.BISECT_BAD, RefKind.BISECT_SKIP -> JBColor(Color(0x822F2F), Color(0xF0AAAA))
-        RefKind.NOTES -> JBColor(Color(0x286973), Color(0xA9DCE1))
-        RefKind.OTHER -> JBColor.foreground()
     }
 
     override fun getToolTipText(event: MouseEvent): String? = hitTarget(event.point)?.hash?.let { hash ->
