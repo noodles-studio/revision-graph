@@ -331,7 +331,7 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             g.fillRoundRect(b.x.toInt(), b.y.toInt(), 5, b.height.toInt(), 9, 9)
         } else {
             val oldClip = g.clip
-            g.clip = java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 10.0, 10.0)
+            g.clip(java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 10.0, 10.0))
             val rowHeight = b.height / refs.size
             refs.forEachIndexed { index, ref ->
                 g.color = RevisionGraphColors.refBackground(ref.kind, ref.head)
