@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "io.github.noodles_studio"
-version = "2.1.0"
+version = "2.2.0"
 
 kotlin { jvmToolchain(21) }
 
