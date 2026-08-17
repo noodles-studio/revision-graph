@@ -7,9 +7,19 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.name
 import kotlin.io.path.readLines
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ArchitectureBoundaryTest {
+    @Test
+    fun `revision graph routes navigation through native viewport controller`() {
+        val canvasSource = SOURCE_ROOT.resolve("ui/RevisionGraphCanvas.kt").toFile().readText()
+        val viewSource = SOURCE_ROOT.resolve("ui/RevisionGraphView.kt").toFile().readText()
+
+        assertFalse(canvasSource.contains("addMouseWheelListener"))
+        assertTrue(viewSource.contains("RevisionGraphViewportController"))
+    }
+
     @Test
     fun `package imports follow documented dependency direction`() {
         val violations = RULES.flatMap { rule ->

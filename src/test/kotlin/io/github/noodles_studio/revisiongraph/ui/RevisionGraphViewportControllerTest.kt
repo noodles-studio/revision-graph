@@ -56,6 +56,17 @@ class RevisionGraphViewportControllerTest {
         assertTrue(command.isConsumed)
     }
 
+    @Test fun `ordinary wheel remains available to native scroll pane`() = onEdt {
+        val controller = controllerWithLargeGraph()
+        controller.scrollPane.viewport.viewPosition = Point(200, 150)
+        val event = wheelEvent(controller.scrollPane, modifiers = 0, preciseRotation = 1.0)
+
+        controller.scrollPane.dispatchEvent(event)
+
+        assertEquals(100, controller.zoomPercent())
+        assertTrue(controller.scrollPane.viewport.viewPosition.y > 150)
+    }
+
     @Test fun `recognized wheel remains consumed at scale boundary`() = onEdt {
         val controller = controllerWithGraph(isMac = false)
         controller.setZoomPercent(350.0)

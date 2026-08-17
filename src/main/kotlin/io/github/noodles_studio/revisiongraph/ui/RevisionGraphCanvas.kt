@@ -34,13 +34,11 @@ import javax.swing.ToolTipManager
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 /** RevisionGraph-style block topology with IDEA-aware colors and interaction. */
 internal class RevisionGraphCanvas(private val typography: GraphTypography = GraphTypography.fromIdeaDefaults()) : JComponent() {
     internal var onContextMenu: ((RevisionCompareSelection, Point) -> Unit)? = null
     internal var onRevisionSelected: ((CompareRevision) -> Unit)? = null
-    var onZoomChanged: ((Int) -> Unit)? = null
     private var snapshot: GraphSnapshot? = null
     private var layout: GraphLayout? = null
     private var scale = 1.0
@@ -125,26 +123,11 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             ?: snapshot.head.hash?.takeIf { firstGraph && it in layout.byHash }
     }
 
-    fun show(snapshot: GraphSnapshot, layout: GraphLayout, focusHash: String? = null) {
-        showGraph(snapshot, layout, focusHash)
-    }
-
     fun clearSelection() = updateSelection(RevisionSelection.EMPTY)
-    fun zoomIn() { setGraphScale(scale * 1.18) }
-    fun zoomOut() { setGraphScale(scale / 1.18) }
-    fun zoomPercent() = (scale * 100.0).roundToInt()
-    fun setZoomPercent(percent: Double) { setGraphScale(percent / 100.0) }
-    fun resetView() {
-        setGraphScale(1.0)
-    }
 
     fun setVisibleRefKinds(kinds: Set<RefKind>) {
         visibleRefKinds = kinds
         repaint()
-    }
-
-    fun locateRevision(hash: String, revision: String) {
-        selectAndLocateRevision(hash, revision)
     }
 
     internal fun selectAndLocateRevision(hash: String, revision: String): Boolean {
@@ -159,28 +142,6 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
 
     fun containsRevision(hash: String?): Boolean = hash != null && layout?.byHash?.containsKey(hash) == true
 
-    fun focusRevision(hash: String): Boolean {
-        return containsRevision(hash)
-    }
-
-    fun fitToView() {
-        val graph = layout ?: return
-        if (width < 50 || height < 50) return
-        setGraphScale(fitScale(graph.bounds, size, FitMode.ALL))
-    }
-
-    fun fitWidth() {
-        val graph = layout ?: return
-        if (width < 50) return
-        setGraphScale(fitScale(graph.bounds, size, FitMode.WIDTH))
-    }
-
-    fun fitHeight() {
-        val graph = layout ?: return
-        if (height < 50) return
-        setGraphScale(fitScale(graph.bounds, size, FitMode.HEIGHT))
-    }
-
     internal val graphScale: Double get() = scale
     internal val graphBounds: Rectangle2D.Double? get() = layout?.bounds
 
@@ -189,7 +150,6 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         if (next == scale) return false
         scale = next
         revalidate()
-        zoomChanged()
         repaint()
         return true
     }
@@ -208,8 +168,6 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             ceil(bounds.height.coerceAtLeast(1.0) * scale + GRAPH_VERTICAL_PADDING * 2).toInt(),
         )
     }
-
-    private fun zoomChanged() = onZoomChanged?.invoke(zoomPercent())
 
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)

@@ -117,7 +117,8 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         message("node.head.detached"),
     )
     private val canvas = RevisionGraphCanvas(typography)
-    private val graphContextComponent = UiDataProvider.wrapComponent(canvas, UiDataProvider { sink ->
+    private val viewportController = RevisionGraphViewportController(canvas)
+    private val graphContextComponent = UiDataProvider.wrapComponent(viewportController.scrollPane, UiDataProvider { sink ->
         sink.set(CommonDataKeys.PROJECT, project)
     })
     private val emptyTitle = JBLabel("", SwingConstants.CENTER).apply {
@@ -225,11 +226,11 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         AllIcons.General.Locate,
     ) {
         override fun actionPerformed(e: AnActionEvent) {
-            publishedHead?.hash?.let(canvas::focusRevision)
+            publishedHead?.hash?.let(viewportController::focusRevision)
         }
 
         override fun update(e: AnActionEvent) {
-            val available = !graphLoading && canvas.containsRevision(publishedHead?.hash)
+            val available = !graphLoading && viewportController.containsRevision(publishedHead?.hash)
             e.presentation.isEnabled = available
             e.presentation.description = message(if (available) "toolbar.locate.head.tooltip" else "toolbar.locate.head.unavailable")
         }
@@ -356,9 +357,9 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         resetFilterButton.addActionListener { applyFilters(RevisionGraphFilter.NONE, ALL_REFERENCE_KINDS) }
         canvas.onContextMenu = { selection, point -> contextActions.showMenu(selection, point, canvas) }
         canvas.onRevisionSelected = contextActions::showSharedLog
-        canvas.onZoomChanged = ::updateZoomBox
+        viewportController.onZoomChanged = ::updateZoomBox
         canvas.setVisibleRefKinds(visibleRefKinds)
-        updateZoomBox(canvas.zoomPercent())
+        updateZoomBox(viewportController.zoomPercent())
         fetchAction?.registerCustomShortcutSet(CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0)), component)
         repositories.subscribe(this) { changedRoot ->
             if (changedRoot == currentRoot) {
@@ -459,7 +460,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
 
     private fun applyZoomFromEditor() {
         val percent = parseZoomPercent(zoomBox.editor.item)
-        if (percent == null) updateZoomBox(canvas.zoomPercent()) else canvas.setZoomPercent(percent)
+        if (percent == null) updateZoomBox(viewportController.zoomPercent()) else viewportController.setZoomPercent(percent)
     }
 
     private fun updateZoomBox(percent: Int) {
@@ -483,7 +484,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         setLocatorError(false)
         locatorMatchIndex = cyclicLocatorIndex(locatorMatches.size, locatorMatchIndex, reverse)
         val result = locatorMatches[locatorMatchIndex]
-        canvas.locateRevision(result.hash, result.revision)
+        viewportController.locateRevision(result.hash, result.revision)
         locatorField.addCurrentTextToHistory()
     }
 
@@ -515,29 +516,29 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
     private fun fitActionGroup(): DefaultActionGroup =
         textPopupGroup(message("toolbar.fit"), message("toolbar.fit.tooltip")).apply {
             add(object : DumbAwareAction(message("toolbar.fit.graph")) {
-                override fun actionPerformed(e: AnActionEvent) = canvas.fitToView()
+                override fun actionPerformed(e: AnActionEvent) = viewportController.fitToView()
             })
             add(object : DumbAwareAction(message("toolbar.fit.width")) {
-                override fun actionPerformed(e: AnActionEvent) = canvas.fitWidth()
+                override fun actionPerformed(e: AnActionEvent) = viewportController.fitWidth()
             })
             add(object : DumbAwareAction(message("toolbar.fit.height")) {
-                override fun actionPerformed(e: AnActionEvent) = canvas.fitHeight()
+                override fun actionPerformed(e: AnActionEvent) = viewportController.fitHeight()
             })
         }
 
     private fun zoomToolbar(): ActionToolbar = ActionManager.getInstance().createActionToolbar(
         ActionPlaces.TOOLBAR,
         DefaultActionGroup().apply {
-            add(textToolbarAction("−", message("toolbar.zoom.out")) { canvas.zoomOut() })
+            add(textToolbarAction("−", message("toolbar.zoom.out")) { viewportController.zoomOut() })
             add(DefaultCustomComponentAction { zoomBox })
-            add(textToolbarAction("+", message("toolbar.zoom.in")) { canvas.zoomIn() })
-            add(textToolbarAction("1:1", message("toolbar.zoom.actual")) { canvas.setZoomPercent(100.0) })
+            add(textToolbarAction("+", message("toolbar.zoom.in")) { viewportController.zoomIn() })
+            add(textToolbarAction("1:1", message("toolbar.zoom.actual")) { viewportController.setZoomPercent(100.0) })
             add(fitActionGroup())
             add(legendAction)
         },
         true,
     ).apply {
-        targetComponent = canvas
+        targetComponent = graphContextComponent
         setMiniMode(true)
         component.isOpaque = false
     }
@@ -620,7 +621,7 @@ internal class RevisionGraphView(private val project: Project) : Disposable {
         }
         locatorSnapshot = snapshot
         resetLocatorSearch()
-        canvas.show(snapshot, layout, filterFocus ?: snapshot.head.hash?.takeIf { focusHead })
+        viewportController.showGraph(snapshot, layout, filterFocus ?: snapshot.head.hash?.takeIf { focusHead })
         graphToolbar.updateActionsAsync()
         setToolbarStatus(null)
         if (snapshot.commits.isEmpty()) showEmptyState() else (cards.layout as CardLayout).show(cards, "graph")
