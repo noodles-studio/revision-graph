@@ -38,7 +38,7 @@ class RevisionGraphCanvasNavigationTest {
 
         assertFalse(canvas.setGraphScale(1.0))
         assertTrue(canvas.setGraphScale(10.0))
-        assertEquals(3.5, canvas.graphScale)
+        assertEquals(3.0, canvas.graphScale)
         assertFalse(canvas.setGraphScale(10.0))
     }
 

@@ -16,7 +16,7 @@
 - Do not directly reference `MacGestureAdapter`, `MouseGestureManager`, `ZoomingDelegate`, Apple gesture classes, or IntelliJ Graph/yFiles implementation classes.
 - Ordinary wheel and trackpad two-finger events must remain unconsumed by plugin zoom code.
 - macOS zoom wheel is exact Cmd/Meta only; Windows/Linux zoom wheel is exact Ctrl only.
-- Preserve scale bounds `0.12..3.5`, existing graph visuals, selection semantics, context menus, cards, legend, watermark, and loading flow.
+- Preserve scale bounds `0.12..3.0`, existing graph visuals, selection semantics, context menus, cards, legend, watermark, and loading flow.
 - Fit calculations use viewport extent, not Canvas size; painting must not mutate navigation state.
 - Follow test-first order and keep each task independently green before continuing.
 
@@ -156,7 +156,7 @@ Create the source file with these exact signatures:
 
 ```kotlin
 internal const val MIN_GRAPH_SCALE = .12
-internal const val MAX_GRAPH_SCALE = 3.5
+internal const val MAX_GRAPH_SCALE = 3.0
 internal const val GRAPH_HORIZONTAL_PADDING = 28.0
 internal const val GRAPH_VERTICAL_PADDING = 24.0
 
@@ -260,7 +260,7 @@ class RevisionGraphCanvasNavigationTest {
         val canvas = canvasWithGraph()
         assertFalse(canvas.setGraphScale(1.0))
         assertTrue(canvas.setGraphScale(10.0))
-        assertEquals(3.5, canvas.graphScale)
+        assertEquals(3.0, canvas.graphScale)
         assertFalse(canvas.setGraphScale(10.0))
     }
 }

@@ -11,7 +11,7 @@ import kotlin.math.min
 import kotlin.math.pow
 
 internal const val MIN_GRAPH_SCALE = .12
-internal const val MAX_GRAPH_SCALE = 3.5
+internal const val MAX_GRAPH_SCALE = 3.0
 internal const val GRAPH_HORIZONTAL_PADDING = 28.0
 internal const val GRAPH_VERTICAL_PADDING = 24.0
 
@@ -23,10 +23,21 @@ internal enum class FitMode {
     HEIGHT,
 }
 
+internal enum class GraphAxisAlignment {
+    START,
+    CENTER,
+}
+
+internal data class GraphContentAlignment(
+    val horizontal: GraphAxisAlignment = GraphAxisAlignment.CENTER,
+    val vertical: GraphAxisAlignment = GraphAxisAlignment.CENTER,
+)
+
 internal data class GraphViewportGeometry(
     val graphBounds: Rectangle2D.Double,
     val scale: Double,
     val viewportExtent: Dimension,
+    val contentAlignment: GraphContentAlignment = GraphContentAlignment(),
 ) {
     val viewSize: Dimension
     val contentOrigin: Point2D.Double
@@ -38,8 +49,8 @@ internal data class GraphViewportGeometry(
         val preferredHeight = ceil(graphHeight + GRAPH_VERTICAL_PADDING * 2).toInt()
         viewSize = Dimension(max(viewportExtent.width, preferredWidth), max(viewportExtent.height, preferredHeight))
         contentOrigin = Point2D.Double(
-            max(GRAPH_HORIZONTAL_PADDING, (viewSize.width - graphWidth) / 2.0),
-            max(GRAPH_VERTICAL_PADDING, (viewSize.height - graphHeight) / 2.0),
+            alignedOrigin(contentAlignment.horizontal, GRAPH_HORIZONTAL_PADDING, viewSize.width - graphWidth),
+            alignedOrigin(contentAlignment.vertical, GRAPH_VERTICAL_PADDING, viewSize.height - graphHeight),
         )
     }
 
@@ -52,6 +63,14 @@ internal data class GraphViewportGeometry(
         graphBounds.minX + (point.x - contentOrigin.x) / scale,
         graphBounds.minY + (point.y - contentOrigin.y) / scale,
     )
+}
+
+private fun alignedOrigin(alignment: GraphAxisAlignment, padding: Double, remainingSpace: Double): Double =
+    if (alignment == GraphAxisAlignment.START) padding else max(padding, remainingSpace / 2.0)
+
+internal fun fitContentAlignment(mode: FitMode): GraphContentAlignment = when (mode) {
+    FitMode.ALL, FitMode.WIDTH -> GraphContentAlignment(vertical = GraphAxisAlignment.START)
+    FitMode.HEIGHT -> GraphContentAlignment(horizontal = GraphAxisAlignment.START)
 }
 
 internal fun fitScale(bounds: Rectangle2D, extent: Dimension, mode: FitMode): Double {

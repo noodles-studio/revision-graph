@@ -20,7 +20,15 @@ internal class RevisionGraphViewportController(
     internal val canvas: RevisionGraphCanvas,
     private val isMac: Boolean = SystemInfo.isMac,
 ) {
-    internal val scrollPane = JBScrollPane(canvas).apply {
+    internal val scrollPane = object : JBScrollPane(canvas) {
+        override fun processMouseWheelEvent(event: MouseWheelEvent) {
+            if (event.preciseWheelRotation != 0.0 && isZoomWheelModifiers(event.modifiersEx, isMac)) {
+                handleWheel(event)
+            } else {
+                super.processMouseWheelEvent(event)
+            }
+        }
+    }.apply {
         border = JBUI.Borders.empty()
         viewport.background = canvas.background
         horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
@@ -32,7 +40,6 @@ internal class RevisionGraphViewportController(
 
     init {
         ClientProperty.put(canvas, Magnificator.CLIENT_PROPERTY_KEY, Magnificator(::magnify))
-        scrollPane.addMouseWheelListener(::handleWheel)
         installPanHandler()
     }
 
@@ -163,7 +170,7 @@ internal class RevisionGraphViewportController(
             }
             return
         }
-        val changed = canvas.setGraphScale(fitScale(bounds, extent, mode))
+        val changed = canvas.setGraphScale(fitScale(bounds, extent, mode), fitContentAlignment(mode))
         validateLayout()
         setViewPosition(Point())
         if (changed) notifyZoomChanged()

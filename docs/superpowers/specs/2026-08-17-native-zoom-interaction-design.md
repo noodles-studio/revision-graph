@@ -190,7 +190,7 @@ factor = 1.12 ^ (-preciseWheelRotation)
 - Zoom Out：当前比例除以 `1.18`，不再使用不完全对称的 `.84`。
 - 百分比输入：直接设置目标比例。
 - 工具栏操作以 viewport 中心为锚点。
-- 合法 scale 范围保持 `12%～350%`。
+- 合法 scale 范围保持 `12%～300%`。
 
 zoom changed 仅在实际 scale 变化时通知，避免百分比组件自触发循环。
 
@@ -201,7 +201,7 @@ Fit 计算使用 `viewport.extentSize`，不能使用会随内容变化的 Canva
 - Fit All：同时考虑可视宽高，scale 最大不超过 100%；横向居中，纵向回到顶部留白。
 - Fit Width：按可视宽度计算，横向居中，纵向回到顶部。
 - Fit Height：按可视高度计算，纵向居中，横向回到左侧留白。
-- 所有结果限制在 `12%～350%`。
+- 所有结果限制在 `12%～300%`。
 - Reset：恢复 100%，viewport 回到左上角，Canvas 固定留白仍保留。
 
 Focus 不再通过 `pendingFocusHash` 在绘制阶段修改相机：
@@ -243,7 +243,7 @@ Windows/Linux: Ctrl，且 Meta/Alt/Shift 均未按下
 - `Shift+滚轮`不消费，由平台执行横向滚动。
 - `Alt+滚轮`及组合修饰键不触发缩放。
 - 合法 `Cmd/Ctrl+滚轮`执行缩放并消费。
-- 到达 12% 或 350% 后，合法缩放事件仍消费，避免突然退化为滚动。
+- 到达 12% 或 300% 后，合法缩放事件仍消费，避免突然退化为滚动。
 - macOS pinch 直接走 `Magnificator`。
 - Windows/Linux pinch 如果由 JBR 表示为 `Ctrl+wheel`，走修饰键滚轮路径。
 
@@ -255,7 +255,7 @@ Windows/Linux: Ctrl，且 Meta/Alt/Shift 均未按下
 - viewport 尺寸为零时，fit/focus 延迟到下一个 EDT 周期执行一次。
 - 组件已 disposed 或延迟后尺寸仍为零时放弃操作，不循环重试。
 - 图边界宽高最少按 1px 计算，避免除零。
-- scale 永远限制在 `0.12～3.5`。
+- scale 永远限制在 `0.12～3.0`。
 - viewport position 每次写入前都裁剪到合法范围。
 - 缩放达到边界时不发送重复 zoom changed 通知。
 - 绘制阶段不修改导航状态。
@@ -287,7 +287,7 @@ Windows/Linux: Ctrl，且 Meta/Alt/Shift 均未按下
 - 小图居中与大图固定留白。
 - 从小图状态缩放到大图状态时锚点保持。
 - 光标锚点缩放前后的世界坐标不变。
-- 12% 和 350% 上下限。
+- 12% 和 300% 上下限。
 - `preciseWheelRotation`方向、大小和小数值。
 - macOS Cmd 与 Windows/Linux Ctrl 判定。
 - Shift、Alt 和组合修饰键不触发缩放。

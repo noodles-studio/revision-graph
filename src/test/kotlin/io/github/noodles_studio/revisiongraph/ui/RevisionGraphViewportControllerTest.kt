@@ -67,19 +67,44 @@ class RevisionGraphViewportControllerTest {
         assertTrue(controller.scrollPane.viewport.viewPosition.y > 150)
     }
 
-    @Test fun `recognized wheel remains consumed at scale boundary`() = onEdt {
-        val controller = controllerWithGraph(isMac = false)
+    @Test fun `dispatched modified wheel zooms without native scrolling`() = onEdt {
+        val controller = controllerWithLargeGraph(isMac = false)
+        controller.scrollPane.viewport.viewPosition = Point(200, 150)
+        var competingListenerCalls = 0
+        controller.scrollPane.addMouseWheelListener { competingListenerCalls++ }
+        val event = wheelEvent(
+            controller.scrollPane,
+            point = Point(120, 80),
+            modifiers = InputEvent.CTRL_DOWN_MASK,
+            preciseRotation = -1.0,
+        )
+        val contentBefore = SwingUtilities.convertPoint(controller.scrollPane, event.point, controller.canvas)
+        val worldBefore = controller.canvas.contentToWorld(contentBefore)!!
+
+        controller.scrollPane.dispatchEvent(event)
+
+        val contentAfter = SwingUtilities.convertPoint(controller.scrollPane, event.point, controller.canvas)
+        assertEquals(112, controller.zoomPercent())
+        assertTrue(event.isConsumed)
+        assertEquals(0, competingListenerCalls)
+        assertPointEquals(worldBefore, controller.canvas.contentToWorld(contentAfter)!!, tolerance = 1.0)
+    }
+
+    @Test fun `recognized wheel remains consumed at three hundred percent boundary`() = onEdt {
+        val controller = controllerWithLargeGraph(isMac = false)
         controller.setZoomPercent(350.0)
+        controller.scrollPane.viewport.viewPosition = Point(200, 150)
         val event = wheelEvent(
             controller.scrollPane,
             modifiers = InputEvent.CTRL_DOWN_MASK,
             preciseRotation = -1.0,
         )
 
-        controller.handleWheel(event)
+        controller.scrollPane.dispatchEvent(event)
 
-        assertEquals(350, controller.zoomPercent())
+        assertEquals(300, controller.zoomPercent())
         assertTrue(event.isConsumed)
+        assertEquals(Point(200, 150), controller.scrollPane.viewport.viewPosition)
     }
 
     @Test fun `modified wheel keeps world point under cursor`() = onEdt {
@@ -110,6 +135,48 @@ class RevisionGraphViewportControllerTest {
         controller.resetView()
         assertEquals(100, controller.zoomPercent())
         assertEquals(Point(0, 0), controller.scrollPane.viewport.viewPosition)
+    }
+
+    @Test fun `fit all top aligns a wide short graph`() = onEdt {
+        val controller = controllerWithGraph(
+            extent = Dimension(456, 348),
+            bounds = Rectangle2D.Double(0.0, 0.0, 800.0, 100.0),
+        )
+
+        controller.fitToView()
+
+        assertPointEquals(
+            Point2D.Double(GRAPH_HORIZONTAL_PADDING, GRAPH_VERTICAL_PADDING),
+            controller.canvas.worldToContent(Point2D.Double(0.0, 0.0))!!,
+        )
+    }
+
+    @Test fun `fit width top aligns a wide short graph`() = onEdt {
+        val controller = controllerWithGraph(
+            extent = Dimension(456, 348),
+            bounds = Rectangle2D.Double(0.0, 0.0, 800.0, 100.0),
+        )
+
+        controller.fitWidth()
+
+        assertPointEquals(
+            Point2D.Double(GRAPH_HORIZONTAL_PADDING, GRAPH_VERTICAL_PADDING),
+            controller.canvas.worldToContent(Point2D.Double(0.0, 0.0))!!,
+        )
+    }
+
+    @Test fun `fit height left aligns a narrow tall graph`() = onEdt {
+        val controller = controllerWithGraph(
+            extent = Dimension(456, 348),
+            bounds = Rectangle2D.Double(0.0, 0.0, 100.0, 600.0),
+        )
+
+        controller.fitHeight()
+
+        assertPointEquals(
+            Point2D.Double(GRAPH_HORIZONTAL_PADDING, GRAPH_VERTICAL_PADDING),
+            controller.canvas.worldToContent(Point2D.Double(0.0, 0.0))!!,
+        )
     }
 
     @Test fun `focus centers node horizontally and uses focus screen y`() = onEdt {

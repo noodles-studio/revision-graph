@@ -42,6 +42,7 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
     private var snapshot: GraphSnapshot? = null
     private var layout: GraphLayout? = null
     private var scale = 1.0
+    private var contentAlignment = GraphContentAlignment()
     private var selection = RevisionSelection.EMPTY
     private var relationshipCache: RelationshipCache? = null
     private val compareRevisionsByHash = mutableMapOf<String, CompareRevision>()
@@ -145,17 +146,22 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
     internal val graphScale: Double get() = scale
     internal val graphBounds: Rectangle2D.Double? get() = layout?.bounds
 
-    internal fun setGraphScale(requested: Double): Boolean {
+    internal fun setGraphScale(
+        requested: Double,
+        alignment: GraphContentAlignment = GraphContentAlignment(),
+    ): Boolean {
         val next = requested.coerceIn(MIN_GRAPH_SCALE, MAX_GRAPH_SCALE)
-        if (next == scale) return false
+        val scaleChanged = next != scale
+        if (!scaleChanged && alignment == contentAlignment) return false
         scale = next
+        contentAlignment = alignment
         revalidate()
         repaint()
-        return true
+        return scaleChanged
     }
 
     internal fun graphGeometry(extent: Dimension): GraphViewportGeometry? =
-        layout?.bounds?.let { GraphViewportGeometry(it, scale, extent) }
+        layout?.bounds?.let { GraphViewportGeometry(it, scale, extent, contentAlignment) }
 
     internal fun worldToContent(point: Point2D): Point2D.Double? = graphGeometry(size)?.worldToContent(point)
     internal fun contentToWorld(point: Point2D): Point2D.Double? = graphGeometry(size)?.contentToWorld(point)
@@ -173,7 +179,7 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         super.paintComponent(g)
         val graph = layout ?: return
         val model = snapshot ?: return
-        val geometry = GraphViewportGeometry(graph.bounds, scale, size)
+        val geometry = GraphViewportGeometry(graph.bounds, scale, size, contentAlignment)
         val g2 = (g.create() as Graphics2D).apply {
             setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
