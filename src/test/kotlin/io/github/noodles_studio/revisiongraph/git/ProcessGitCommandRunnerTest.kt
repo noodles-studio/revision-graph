@@ -10,18 +10,13 @@ import kotlin.test.assertTrue
 class ProcessGitCommandRunnerTest {
     @Test
     fun `runner forcibly stops a silent process after cancellation`() {
-        val javaExecutable = Path.of(
-            System.getProperty("java.home"),
-            "bin",
-            if (System.getProperty("os.name").startsWith("Windows")) "java.exe" else "java",
-        ).toString()
-        val runner = ProcessGitCommandRunner { javaExecutable }
+        val runner = ProcessGitCommandRunner { "git" }
         val started = System.nanoTime()
 
         assertFailsWith<InterruptedException> {
             runner.run(
                 Path.of("."),
-                listOf("-cp", System.getProperty("java.class.path"), BlockingProcess::class.java.name),
+                listOf("hash-object", "--stdin"),
                 cancelled = { System.nanoTime() - started > TimeUnit.MILLISECONDS.toNanos(150) },
                 readOutput = { input -> input.readBytes() },
             )
@@ -45,12 +40,5 @@ class ProcessGitCommandRunnerTest {
         }
 
         assertContains(error.message.orEmpty(), "Unable to start")
-    }
-
-    object BlockingProcess {
-        @JvmStatic
-        fun main(args: Array<String>) {
-            Thread.sleep(30_000)
-        }
     }
 }
