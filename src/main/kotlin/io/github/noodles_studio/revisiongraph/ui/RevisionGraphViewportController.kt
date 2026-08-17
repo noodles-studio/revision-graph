@@ -3,6 +3,7 @@ package io.github.noodles_studio.revisiongraph.ui
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.ClientProperty
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBViewport
 import com.intellij.ui.components.Magnificator
 import com.intellij.util.ui.JBUI
 import io.github.noodles_studio.revisiongraph.layout.GraphLayout
@@ -21,6 +22,8 @@ internal class RevisionGraphViewportController(
     private val isMac: Boolean = SystemInfo.isMac,
 ) {
     internal val scrollPane = object : JBScrollPane(canvas) {
+        override fun createViewport(): JBViewport = LiveZoomViewport()
+
         override fun processMouseWheelEvent(event: MouseWheelEvent) {
             if (event.preciseWheelRotation != 0.0 && isZoomWheelModifiers(event.modifiersEx, isMac)) {
                 handleWheel(event)
@@ -37,6 +40,35 @@ internal class RevisionGraphViewportController(
     internal var onZoomChanged: ((Int) -> Unit)? = null
     private var panStart: Point? = null
     private var panStartPosition: Point? = null
+
+    /**
+     * JBViewport's default ZoomingDelegate paints a cached bitmap while a pinch is active.
+     * That cache is useful for heavyweight views, but it can expose transparent pixels around
+     * a small/HiDPI Swing view as a black rectangle. Keep the platform gesture routing and
+     * cumulative magnification semantics, while rendering this graph normally on every update.
+     */
+    private inner class LiveZoomViewport : JBViewport() {
+        override fun magnificationStarted(point: Point) {
+            beginMagnification(point)
+        }
+
+        override fun magnify(magnification: Double) {
+            updateMagnification(magnification)
+        }
+
+        override fun magnificationFinished(magnification: Double) {
+            updateMagnification(magnification)
+            endMagnification()
+        }
+    }
+
+    private data class MagnificationState(
+        val anchorInViewport: Point,
+        val anchorWorld: Point2D.Double,
+        val initialScale: Double,
+    )
+
+    private var magnificationState: MagnificationState? = null
 
     init {
         ClientProperty.put(canvas, Magnificator.CLIENT_PROPERTY_KEY, Magnificator(::magnify))
@@ -139,14 +171,55 @@ internal class RevisionGraphViewportController(
         return applyScaleAtContentAnchor(factor, anchorContent) ?: anchorContent
     }
 
+    private fun beginMagnification(anchorInViewport: Point) {
+        magnificationState = null
+        val extent = scrollPane.viewport.extentSize
+        val geometry = canvas.graphGeometry(extent) ?: return
+        val anchorContent = SwingUtilities.convertPoint(scrollPane.viewport, anchorInViewport, canvas)
+        magnificationState = MagnificationState(
+            anchorInViewport = Point(anchorInViewport),
+            anchorWorld = geometry.contentToWorld(anchorContent),
+            initialScale = canvas.graphScale,
+        )
+    }
+
+    private fun updateMagnification(magnification: Double) {
+        val state = magnificationState ?: return
+        if (!magnification.isFinite()) return
+        val factor = if (magnification < 0.0) {
+            1.0 / (1.0 - magnification)
+        } else {
+            1.0 + magnification
+        }
+        if (!factor.isFinite() || factor <= 0.0) return
+        val remapped = applyScaleAtWorldAnchor(state.initialScale * factor, state.anchorWorld) ?: return
+        setViewPosition(
+            Point(
+                remapped.x - state.anchorInViewport.x,
+                remapped.y - state.anchorInViewport.y,
+            ),
+        )
+    }
+
+    private fun endMagnification() {
+        magnificationState = null
+    }
+
     private fun applyScaleAtContentAnchor(factor: Double, anchorContent: Point): Point? {
         val oldGeometry = canvas.graphGeometry(scrollPane.viewport.extentSize) ?: return null
         val anchorWorld = oldGeometry.contentToWorld(anchorContent)
-        val changed = canvas.setGraphScale(canvas.graphScale * factor)
+        return applyScaleAtWorldAnchor(canvas.graphScale * factor, anchorWorld)
+    }
+
+    private fun applyScaleAtWorldAnchor(
+        requestedScale: Double,
+        anchorWorld: Point2D.Double,
+    ): Point? {
+        val changed = canvas.setGraphScale(requestedScale)
         validateLayout()
-        val newGeometry = canvas.graphGeometry(scrollPane.viewport.extentSize) ?: return null
+        val geometry = canvas.graphGeometry(scrollPane.viewport.extentSize) ?: return null
+        val remapped = geometry.worldToContent(anchorWorld)
         if (changed) notifyZoomChanged()
-        val remapped = newGeometry.worldToContent(anchorWorld)
         return Point(remapped.x.roundToInt(), remapped.y.roundToInt())
     }
 

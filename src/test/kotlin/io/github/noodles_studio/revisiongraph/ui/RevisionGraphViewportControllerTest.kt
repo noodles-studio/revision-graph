@@ -42,6 +42,37 @@ class RevisionGraphViewportControllerTest {
         assertPointEquals(before, controller.canvas.contentToWorld(remapped)!!, tolerance = 1.0)
     }
 
+    @Test fun `pinch magnification updates the live canvas and keeps its viewport anchor`() = onEdt {
+        val controller = controllerWithLargeGraph(extent = Dimension(300, 200), isMac = true)
+        val viewport = controller.scrollPane.viewport as JBViewport
+        val anchor = Point(120, 80)
+        val contentBefore = SwingUtilities.convertPoint(viewport, anchor, controller.canvas)
+        val worldBefore = controller.canvas.contentToWorld(contentBefore)!!
+
+        viewport.magnificationStarted(anchor)
+        viewport.magnify(.5)
+
+        assertEquals(150, controller.zoomPercent())
+        val contentAfter = SwingUtilities.convertPoint(viewport, anchor, controller.canvas)
+        assertPointEquals(worldBefore, controller.canvas.contentToWorld(contentAfter)!!, tolerance = 1.0)
+
+        viewport.magnify(1.0)
+        assertEquals(200, controller.zoomPercent())
+        viewport.magnificationFinished(1.0)
+        viewport.magnify(.5)
+        assertEquals(200, controller.zoomPercent())
+    }
+
+    @Test fun `pinch shrink uses the reciprocal cumulative magnification scale`() = onEdt {
+        val controller = controllerWithLargeGraph(extent = Dimension(300, 200), isMac = true)
+        val viewport = controller.scrollPane.viewport as JBViewport
+
+        viewport.magnificationStarted(Point(120, 80))
+        viewport.magnify(-.5)
+
+        assertEquals(67, controller.zoomPercent())
+    }
+
     @Test fun `ordinary wheel is ignored while mac command wheel zooms and consumes`() = onEdt {
         val controller = controllerWithGraph(isMac = true)
         val ordinary = wheelEvent(controller.scrollPane, modifiers = 0, preciseRotation = 1.0)
