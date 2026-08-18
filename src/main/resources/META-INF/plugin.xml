@@ -8,9 +8,12 @@
         and open focused Git Log views using the IDE's bundled Git integration.</p>
     ]]></description>
     <change-notes><![CDATA[
-        <h3>2.2.0</h3>
+        <h3>2.3.0</h3>
         <ul>
-            <li>Remove thin background gaps along rounded reference label borders.</li>
+            <li>Use native IntelliJ scrolling and trackpad gestures throughout the revision graph.</li>
+            <li>Keep the graph position stable while pinching or using modifier-wheel zoom.</li>
+            <li>Preserve ordinary two-finger scrolling and support mouse zoom up to 300%.</li>
+            <li>Render pinch zoom live without black background artifacts.</li>
         </ul>
     ]]></change-notes>
     <resource-bundle>messages.RevisionGraphBundle</resource-bundle>
