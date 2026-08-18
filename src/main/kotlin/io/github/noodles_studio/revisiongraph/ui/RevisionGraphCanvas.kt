@@ -14,6 +14,7 @@ import io.github.noodles_studio.revisiongraph.model.relationship
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Cursor
+import java.awt.Dimension
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Point
@@ -21,7 +22,6 @@ import java.awt.Rectangle
 import java.awt.RenderingHints
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import java.awt.geom.AffineTransform
 import java.awt.geom.Path2D
 import java.awt.geom.Point2D
 import java.awt.geom.Rectangle2D
@@ -31,21 +31,18 @@ import java.time.format.DateTimeFormatter
 import javax.swing.JComponent
 import javax.swing.SwingUtilities
 import javax.swing.ToolTipManager
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 /** RevisionGraph-style block topology with IDEA-aware colors and interaction. */
 internal class RevisionGraphCanvas(private val typography: GraphTypography = GraphTypography.fromIdeaDefaults()) : JComponent() {
     internal var onContextMenu: ((RevisionCompareSelection, Point) -> Unit)? = null
     internal var onRevisionSelected: ((CompareRevision) -> Unit)? = null
-    var onZoomChanged: ((Int) -> Unit)? = null
     private var snapshot: GraphSnapshot? = null
     private var layout: GraphLayout? = null
     private var scale = 1.0
-    private var offsetX = 28.0
-    private var offsetY = 22.0
-    private var pendingFocusHash: String? = null
+    private var contentAlignment = GraphContentAlignment()
     private var selection = RevisionSelection.EMPTY
     private var relationshipCache: RelationshipCache? = null
     private val compareRevisionsByHash = mutableMapOf<String, CompareRevision>()
@@ -65,7 +62,6 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         isOpaque = true
         background = JBColor(Color(0xF7F8FA), Color(0x1E1F22))
         ToolTipManager.sharedInstance().registerComponent(this)
-        addMouseWheelListener { e -> zoomAt(if (e.preciseWheelRotation < 0) 1.12 else .89, e.point) }
         val mouse = object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
                 popupHandledOnPress = isContextTrigger(e)
@@ -74,7 +70,6 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
                     return
                 }
                 if (SwingUtilities.isLeftMouseButton(e) || SwingUtilities.isMiddleMouseButton(e)) {
-                    pendingFocusHash = null
                     pressedButton = e.button
                     dragStart = e.point
                     dragged = false
@@ -84,10 +79,6 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
             override fun mouseDragged(e: MouseEvent) {
                 val start = dragStart ?: return
                 if (start.distance(e.point) > 2) dragged = true
-                offsetX += e.x - start.x
-                offsetY += e.y - start.y
-                dragStart = e.point
-                repaint()
             }
             override fun mouseReleased(e: MouseEvent) {
                 if (isContextTrigger(e)) {
@@ -120,137 +111,86 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
         addMouseMotionListener(mouse)
     }
 
-    fun show(snapshot: GraphSnapshot, layout: GraphLayout, focusHash: String? = null) {
+    internal fun showGraph(snapshot: GraphSnapshot, layout: GraphLayout, focusHash: String? = null): String? {
         val firstGraph = this.layout == null
         this.snapshot = snapshot
         this.layout = layout
         relationshipCache = null
         selection = selection.retain(layout.byHash.keys)
         retainCompareRevisions()
-        val requestedFocus = focusHash?.takeIf(layout.byHash::containsKey)
+        revalidate()
+        repaint()
+        return focusHash?.takeIf(layout.byHash::containsKey)
             ?: snapshot.head.hash?.takeIf { firstGraph && it in layout.byHash }
-        when {
-            requestedFocus != null -> {
-                pendingFocusHash = requestedFocus
-                repaint()
-            }
-            firstGraph -> resetView()
-            else -> repaint()
-        }
     }
 
     fun clearSelection() = updateSelection(RevisionSelection.EMPTY)
-    fun zoomIn() = zoomAt(1.18, Point(width / 2, height / 2))
-    fun zoomOut() = zoomAt(.84, Point(width / 2, height / 2))
-    fun zoomPercent() = (scale * 100.0).roundToInt()
-    fun setZoomPercent(percent: Double) = zoomAt(percent.coerceIn(12.0, 350.0) / 100.0 / scale, Point(width / 2, height / 2))
-    fun resetView() {
-        pendingFocusHash = null
-        scale = 1.0
-        offsetX = 28.0
-        offsetY = 22.0
-        zoomChanged()
-        repaint()
-    }
 
     fun setVisibleRefKinds(kinds: Set<RefKind>) {
         visibleRefKinds = kinds
         repaint()
     }
 
-    fun locateRevision(hash: String, revision: String) {
-        val graph = layout ?: return
-        if (hash !in graph.byHash) return
-        pendingFocusHash = hash
+    internal fun selectAndLocateRevision(hash: String, revision: String): Boolean {
+        val graph = layout ?: return false
+        if (hash !in graph.byHash) return false
         updateSelection(
             RevisionSelection(hash, activeHash = hash),
             HitTarget(hash, revision),
         )
-        repaint()
+        return true
     }
 
     fun containsRevision(hash: String?): Boolean = hash != null && layout?.byHash?.containsKey(hash) == true
 
-    fun focusRevision(hash: String): Boolean {
-        if (!containsRevision(hash)) return false
-        pendingFocusHash = hash
+    internal val graphScale: Double get() = scale
+    internal val graphBounds: Rectangle2D.Double? get() = layout?.bounds
+
+    internal fun setGraphScale(
+        requested: Double,
+        alignment: GraphContentAlignment = GraphContentAlignment(),
+    ): Boolean {
+        val next = requested.coerceIn(MIN_GRAPH_SCALE, MAX_GRAPH_SCALE)
+        val scaleChanged = next != scale
+        if (!scaleChanged && alignment == contentAlignment) return false
+        scale = next
+        contentAlignment = alignment
+        revalidate()
         repaint()
-        return true
+        return scaleChanged
     }
 
-    fun fitToView() {
-        val graph = layout ?: return
-        if (width < 50 || height < 50) return
-        pendingFocusHash = null
-        scale = min(1.0, min((width - 56.0) / graph.bounds.width, (height - 48.0) / graph.bounds.height)).coerceAtLeast(.12)
-        offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0)
-        offsetY = 24.0
-        zoomChanged()
-        repaint()
-    }
+    internal fun graphGeometry(extent: Dimension): GraphViewportGeometry? =
+        layout?.bounds?.let { GraphViewportGeometry(it, scale, extent, contentAlignment) }
 
-    fun fitWidth() {
-        val graph = layout ?: return
-        if (width < 50) return
-        pendingFocusHash = null
-        scale = min(1.0, (width - 56.0) / graph.bounds.width).coerceAtLeast(.12)
-        offsetX = max(28.0, (width - graph.bounds.width * scale) / 2.0)
-        offsetY = 24.0
-        zoomChanged()
-        repaint()
-    }
+    internal fun worldToContent(point: Point2D): Point2D.Double? = graphGeometry(size)?.worldToContent(point)
+    internal fun contentToWorld(point: Point2D): Point2D.Double? = graphGeometry(size)?.contentToWorld(point)
+    internal fun nodeBounds(hash: String): Rectangle2D.Double? = layout?.byHash?.get(hash)?.bounds
 
-    fun fitHeight() {
-        val graph = layout ?: return
-        if (height < 50) return
-        pendingFocusHash = null
-        scale = min(1.0, (height - 48.0) / graph.bounds.height).coerceAtLeast(.12)
-        offsetX = 28.0
-        offsetY = max(24.0, (height - graph.bounds.height * scale) / 2.0)
-        zoomChanged()
-        repaint()
+    override fun getPreferredSize(): Dimension {
+        val bounds = layout?.bounds ?: return super.getPreferredSize()
+        return Dimension(
+            ceil(bounds.width.coerceAtLeast(1.0) * scale + GRAPH_HORIZONTAL_PADDING * 2).toInt(),
+            ceil(bounds.height.coerceAtLeast(1.0) * scale + GRAPH_VERTICAL_PADDING * 2).toInt(),
+        )
     }
-
-    private fun zoomAt(factor: Double, point: Point) {
-        pendingFocusHash = null
-        val old = scale
-        scale = (scale * factor).coerceIn(.12, 3.5)
-        offsetX = point.x - (point.x - offsetX) * scale / old
-        offsetY = point.y - (point.y - offsetY) * scale / old
-        zoomChanged()
-        repaint()
-    }
-
-    private fun zoomChanged() = onZoomChanged?.invoke(zoomPercent())
 
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)
         val graph = layout ?: return
         val model = snapshot ?: return
-        applyPendingFocus(graph)
+        val geometry = GraphViewportGeometry(graph.bounds, scale, size, contentAlignment)
         val g2 = (g.create() as Graphics2D).apply {
             setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
-            transform(AffineTransform.getTranslateInstance(offsetX, offsetY))
+            translate(geometry.contentOrigin.x, geometry.contentOrigin.y)
             scale(scale, scale)
+            translate(-graph.bounds.minX, -graph.bounds.minY)
         }
-        val visible = screenToWorld(Rectangle(0, 0, width, height))
+        val visible = contentToWorld(g.clipBounds ?: Rectangle(0, 0, width, height), geometry)
         drawEdges(g2, graph, visible)
         graph.index.query(expand(visible, 8.0, 8.0)).forEach { drawNode(g2, model, it) }
         g2.dispose()
-    }
-
-    private fun applyPendingFocus(graph: GraphLayout) {
-        val hash = pendingFocusHash ?: return
-        val node = graph.byHash[hash] ?: run {
-            pendingFocusHash = null
-            return
-        }
-        if (width < 50 || height < 50) return
-        offsetX = width / 2.0 - node.bounds.centerX * scale
-        val contentAbove = (node.bounds.centerY - graph.bounds.minY) * scale
-        offsetY = focusScreenY(height, contentAbove) - node.bounds.centerY * scale
-        pendingFocusHash = null
     }
 
     private fun drawEdges(g: Graphics2D, graph: GraphLayout, visible: Rectangle2D) {
@@ -515,7 +455,7 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
     private fun hitTarget(point: Point): HitTarget? {
         val graph = layout ?: return null
         val model = snapshot ?: return null
-        val world = screenToWorld(Point2D.Double(point.x.toDouble(), point.y.toDouble()))
+        val world = contentToWorld(Point2D.Double(point.x.toDouble(), point.y.toDouble())) ?: return null
         val node = graph.index.hit(world) ?: return null
         val refs = visualRefs(model, node.hash)
         if (refs.isEmpty()) return HitTarget(node.hash, node.hash)
@@ -596,9 +536,8 @@ internal class RevisionGraphCanvas(private val typography: GraphTypography = Gra
 
     private fun laneColor(lane: Int) = laneColors[lane.mod(laneColors.size)]
     private fun expand(r: Rectangle2D, x: Double, y: Double) = Rectangle2D.Double(r.x - x, r.y - y, r.width + x * 2, r.height + y * 2)
-    private fun screenToWorld(point: Point2D) = Point2D.Double((point.x - offsetX) / scale, (point.y - offsetY) / scale)
-    private fun screenToWorld(rect: Rectangle): Rectangle2D.Double {
-        val p = screenToWorld(Point2D.Double(rect.x.toDouble(), rect.y.toDouble()))
+    private fun contentToWorld(rect: Rectangle, geometry: GraphViewportGeometry): Rectangle2D.Double {
+        val p = geometry.contentToWorld(Point2D.Double(rect.x.toDouble(), rect.y.toDouble()))
         return Rectangle2D.Double(p.x, p.y, max(1.0, rect.width / scale), max(1.0, rect.height / scale))
     }
     private fun escape(value: String) = value

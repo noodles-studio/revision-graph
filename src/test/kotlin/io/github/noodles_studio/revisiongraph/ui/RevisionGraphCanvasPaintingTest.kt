@@ -28,7 +28,7 @@ class RevisionGraphCanvasPaintingTest {
         )
         val canvas = RevisionGraphCanvas().apply {
             setSize(120, 80)
-            show(snapshot, layout)
+            showGraph(snapshot, layout)
         }
         val image = BufferedImage(canvas.width, canvas.height, BufferedImage.TYPE_INT_ARGB).apply {
             val graphics = createGraphics()
@@ -55,7 +55,7 @@ class RevisionGraphCanvasPaintingTest {
         )
         val canvas = RevisionGraphCanvas().apply {
             setSize(100, 40)
-            show(snapshot, layout)
+            showGraph(snapshot, layout)
         }
         val untouched = Color.MAGENTA.rgb
         val image = BufferedImage(100, 80, BufferedImage.TYPE_INT_ARGB).apply {
